@@ -63,6 +63,7 @@ Each report should include:
 * Do not create documentation for highly specialized or one-off changes.
 * Do **not** write tests for configuration files, local models, or datasets.
 * Tests should not depend on local configuration, model files, or datasets.
+* code in IsaacLab is not allowed to modified
 
 ## Notes
 

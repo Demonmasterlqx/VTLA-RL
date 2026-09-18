@@ -1,0 +1,45 @@
+# Large runtime-only bind mounts.  They must stay outside the image.
+datasets/
+models/
+results/
+Record/
+
+# Isaac Sim is supplied by the NVIDIA Isaac Sim base image.  The workspace
+# path is recreated as /root/Tabero/isaacsim -> /isaac-sim in the image.
+isaacsim/
+
+# Recreate Python environments inside the image with uv.
+**/.venv/
+RLinf/.venv/
+T2-VLA/.venv/
+IsaacLab/.venv/
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+.cache/
+
+# Generated experiment output and local caches.
+**/logs/
+**/runs/
+**/outputs/
+**/output/
+**/videos/
+**/recordings/
+**/.nv/
+**/kit/cache/
+
+# Host-only Isaac Sim link; it is recreated inside the image.
+IsaacLab/_isaac_sim
+
+# Credentials and local environment files must never enter a build context.
+.env
+.env.*
+!.env.example
+
+# Local Docker artifacts.
+docker-compose.override.yml
+docker/.container.cfg

@@ -1,0 +1,98 @@
+name: tabero
+
+x-tabero-common: &tabero-common
+  image: ${TABERO_IMAGE:-ccr.ccs.tencentyun.com/vtla/vtla:0.3}
+  build:
+    context: .
+    dockerfile: Dockerfile
+    # Use the host network for optional local proxy access during dependency
+    # installation.  Runtime containers keep the separate network_mode below.
+    network: host
+    additional_contexts:
+      uv-cache: ${UV_CACHE_HOST:-${HOME}/.cache/uv}
+      pip-cache: ${PIP_CACHE_HOST:-${HOME}/.cache/pip}
+    args:
+      ISAACSIM_IMAGE: ${ISAACSIM_IMAGE:-nvcr.io/nvidia/isaac-sim:5.1.0}
+      UV_VERSION: ${UV_VERSION:-0.12.9}
+      HTTP_PROXY: ${TABERO_HTTP_PROXY:-}
+      HTTPS_PROXY: ${TABERO_HTTPS_PROXY:-}
+      ALL_PROXY: ${TABERO_ALL_PROXY:-}
+  network_mode: host
+  ipc: host
+  shm_size: "16gb"
+  ulimits:
+    memlock: -1
+    stack: 67108864
+  environment:
+    ACCEPT_EULA: "Y"
+    OMNI_KIT_ALLOW_ROOT: "1"
+    NVIDIA_DRIVER_CAPABILITIES: all
+    ISAACSIM_PATH: /root/Tabero/isaacsim
+    ISAACLAB_PATH: /root/Tabero/IsaacLab
+  volumes:
+    - type: bind
+      source: ${TABERO_HOST:-.}/datasets
+      target: /root/Tabero/datasets
+      read_only: true
+    - type: bind
+      source: ${TABERO_HOST:-.}/models
+      target: /root/Tabero/models
+      read_only: true
+    - type: bind
+      source: ${TABERO_HOST:-.}/results
+      target: /root/Tabero/results
+    - type: bind
+      source: ${TABERO_HOST:-.}/Record
+      target: /root/Tabero/Record
+    - type: bind
+      source: ${TABERO_ENV_FILE:-.env}
+      target: /root/Tabero/.env
+      read_only: true
+    - type: volume
+      source: isaac-kit-cache
+      target: /isaac-sim/kit/cache
+    - type: volume
+      source: isaac-ov-cache
+      target: /root/.cache/ov
+    - type: volume
+      source: isaac-gl-cache
+      target: /root/.cache/nvidia/GLCache
+    - type: volume
+      source: isaac-compute-cache
+      target: /root/.nv/ComputeCache
+    - type: volume
+      source: isaac-logs
+      target: /root/.nvidia-omniverse/logs
+    - type: volume
+      source: isaac-ov-data
+      target: /root/.local/share/ov/data
+
+services:
+  shell:
+    <<: *tabero-common
+    gpus: all
+    stdin_open: true
+    tty: true
+    command: ["shell"]
+
+  t2-vla:
+    <<: *tabero-common
+    gpus: all
+    stdin_open: true
+    tty: true
+    command: ["shell"]
+
+  rlinf:
+    <<: *tabero-common
+    gpus: all
+    stdin_open: true
+    tty: true
+    command: ["shell"]
+
+volumes:
+  isaac-kit-cache:
+  isaac-ov-cache:
+  isaac-gl-cache:
+  isaac-compute-cache:
+  isaac-logs:
+  isaac-ov-data:
