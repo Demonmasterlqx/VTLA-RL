@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Tabero_X Policies"
+  short_description: "Run and audit Tabero_X plus T2-VLA policy tests"
+  default_prompt: "Use $testing-tabero-x-policies to run a verified Tabero_X plus T2-VLA policy test."

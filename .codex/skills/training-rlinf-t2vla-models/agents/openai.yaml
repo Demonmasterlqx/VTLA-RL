@@ -1,0 +1,4 @@
+interface:
+  display_name: "Train RLinf and T2-VLA Models"
+  short_description: "Review and govern RLinf and T2-VLA training"
+  default_prompt: "Use $training-rlinf-t2vla-models to review and supervise this training plan."
