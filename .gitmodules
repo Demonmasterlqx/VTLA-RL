@@ -1,0 +1,16 @@
+[submodule "IsaacLab"]
+	path = IsaacLab
+	url = git@github.com:isaac-sim/IsaacLab.git
+	branch = release/2.3.0
+[submodule "T2-VLA"]
+	path = T2-VLA
+	url = git@github.com:NathanWu7/T2-VLA.git
+	branch = rl
+[submodule "RLinf"]
+	path = RLinf
+	url = git@github.com:Demonmasterlqx/RLinf.git
+	branch = tabero
+[submodule "Tabero_X"]
+	path = Tabero_X
+	url = git@github.com:xiangixn/Tabero_X.git
+	branch = rl

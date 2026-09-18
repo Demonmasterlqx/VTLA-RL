@@ -1,0 +1,12 @@
+# datasets/models/results
+models/
+results/
+Record/
+datasets
+
+*.tar
+*.tar.gz
+
+isaacsim/*
+
+.env
