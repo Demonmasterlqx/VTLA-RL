@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT=/root/Tabero
+ROOT=/root/VTLA-RL
 ISAAC_ENV="$ROOT/IsaacLab/.venv"
 RLINF_ENV="$ROOT/RLinf/.venv"
 T2_ENV="$ROOT/T2-VLA/.venv"
@@ -34,23 +34,15 @@ case "${1:-shell}" in
     # Make an interactive container shell use the same uv contract as the
     # host.  Credentials are still supplied through the external .env mount.
     # shellcheck disable=SC1091
-    source "$ROOT/activate_uv.sh"
     exec /bin/bash -l "$@"
     ;;
-  isaaclab)
+  tabero_x)
     shift
     # IsaacLab and Tabero_X share the uv environment.  Isaac Sim's setup
     # script contributes Kit/Omniverse bindings while isaaclab.sh selects the
     # uv interpreter through VIRTUAL_ENV/ISAACLAB_PYTHON.
-    export VIRTUAL_ENV="$ISAAC_ENV"
-    export ISAACLAB_PYTHON="$ISAAC_ENV/bin/python"
-    if [[ -f "$ISAACSIM_PATH/setup_python_env.sh" ]]; then
-      # shellcheck disable=SC1091
-      source "$ISAACSIM_PATH/setup_python_env.sh"
-    fi
-    export PYTHONPATH="$ISAAC_PYTHONPATH:${PYTHONPATH:-}"
-    unset CONDA_PREFIX CONDA_DEFAULT_ENV CONDA_PROMPT_MODIFIER
-    exec "$ROOT/IsaacLab/isaaclab.sh" "$@"
+    source "$ROOT/docker/env_setup/tabero_x.sh"
+    exec /bin/bash -l "$@"
     ;;
   isaac-python)
     shift
@@ -60,14 +52,13 @@ case "${1:-shell}" in
     ;;
   rlinf)
     shift
-    exec env -u PYTHONPATH "$RLINF_ENV/bin/python" "$@"
+    source "$ROOT/docker/env_setup/rlinf.sh"
+    exec /bin/bash -l "$@"
     ;;
   t2-vla)
     shift
-    exec env -u PYTHONPATH "$T2_ENV/bin/python" "$@"
-    ;;
-  validate)
-    exec "$ROOT/docker/validate.sh"
+    source "$ROOT/docker/env_setup/t2-vla.sh"
+    exec /bin/bash -l "$@"
     ;;
   *)
     exec "$@"

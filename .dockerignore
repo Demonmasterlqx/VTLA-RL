@@ -3,9 +3,12 @@ datasets/
 models/
 results/
 Record/
+codex-local/
+.codex-local/
+.codex/
 
 # Isaac Sim is supplied by the NVIDIA Isaac Sim base image.  The workspace
-# path is recreated as /root/Tabero/isaacsim -> /isaac-sim in the image.
+# path is recreated as /root/VTLA-RL/isaacsim -> /isaac-sim in the image.
 isaacsim/
 
 # Recreate Python environments inside the image with uv.

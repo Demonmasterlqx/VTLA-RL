@@ -1,13 +1,19 @@
 # datasets/models/results
 models/
+models
 results/
+results
 Record/
+Record
 datasets
 
 *.tar
 *.tar.gz
 
 isaacsim/*
+
+isaacsim
+codex-local
 
 .env
 

@@ -1,25 +1,17 @@
 name: tabero
 
 x-tabero-common: &tabero-common
-  image: ${TABERO_IMAGE:-ccr.ccs.tencentyun.com/vtla/vtla:0.3}
-  build:
-    context: .
-    dockerfile: Dockerfile
-    # Use the host network for optional local proxy access during dependency
-    # installation.  Runtime containers keep the separate network_mode below.
-    network: host
-    additional_contexts:
-      uv-cache: ${UV_CACHE_HOST:-${HOME}/.cache/uv}
-      pip-cache: ${PIP_CACHE_HOST:-${HOME}/.cache/pip}
-    args:
-      ISAACSIM_IMAGE: ${ISAACSIM_IMAGE:-nvcr.io/nvidia/isaac-sim:5.1.0}
-      UV_VERSION: ${UV_VERSION:-0.12.9}
-      HTTP_PROXY: ${TABERO_HTTP_PROXY:-}
-      HTTPS_PROXY: ${TABERO_HTTPS_PROXY:-}
-      ALL_PROXY: ${TABERO_ALL_PROXY:-}
+  image: ${TABERO_IMAGE:-ccr.ccs.tencentyun.com/vtla/vtla:0.4}
   network_mode: host
   ipc: host
   shm_size: "16gb"
+  # PyTorch CUDA tensor sharing uses pidfd_getfd between RLinf's sibling
+  # environment processes. Docker's default seccomp profile blocks that
+  # syscall, and SYS_PTRACE is required by the kernel access check.
+  cap_add:
+    - SYS_PTRACE
+  security_opt:
+    - seccomp=unconfined
   ulimits:
     memlock: -1
     stack: 67108864
@@ -27,26 +19,26 @@ x-tabero-common: &tabero-common
     ACCEPT_EULA: "Y"
     OMNI_KIT_ALLOW_ROOT: "1"
     NVIDIA_DRIVER_CAPABILITIES: all
-    ISAACSIM_PATH: /root/Tabero/isaacsim
-    ISAACLAB_PATH: /root/Tabero/IsaacLab
+    ISAACSIM_PATH: /root/VTLA-RL/isaacsim
+    ISAACLAB_PATH: /root/VTLA-RL/IsaacLab
   volumes:
     - type: bind
-      source: ${TABERO_HOST:-.}/datasets
-      target: /root/Tabero/datasets
+      source: ${TABERO_DATASETS_HOST:-${TABERO_HOST:-.}/datasets}
+      target: /root/VTLA-RL/datasets
       read_only: true
     - type: bind
-      source: ${TABERO_HOST:-.}/models
-      target: /root/Tabero/models
+      source: ${TABERO_MODELS_HOST:-${TABERO_HOST:-.}/models}
+      target: /root/VTLA-RL/models
       read_only: true
     - type: bind
-      source: ${TABERO_HOST:-.}/results
-      target: /root/Tabero/results
+      source: ${TABERO_RESULTS_HOST:-${TABERO_HOST:-.}/results}
+      target: /root/VTLA-RL/results
     - type: bind
-      source: ${TABERO_HOST:-.}/Record
-      target: /root/Tabero/Record
+      source: ${TABERO_RECORD_HOST:-${TABERO_HOST:-.}/Record}
+      target: /root/VTLA-RL/Record
     - type: bind
       source: ${TABERO_ENV_FILE:-.env}
-      target: /root/Tabero/.env
+      target: /root/VTLA-RL/.env
       read_only: true
     - type: volume
       source: isaac-kit-cache
@@ -70,6 +62,23 @@ x-tabero-common: &tabero-common
 services:
   shell:
     <<: *tabero-common
+    build:
+      context: .
+      dockerfile: Dockerfile
+      # Use the host network for optional local proxy access during dependency
+      # installation. Runtime containers keep the network_mode above.
+      network: host
+      args:
+        ISAACSIM_IMAGE: ${ISAACSIM_IMAGE:-nvcr.io/nvidia/isaac-sim:5.1.0}
+        UV_VERSION: ${UV_VERSION:-0.12.9}
+        PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
+        PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://mirror.sjtu.edu.cn/pytorch-wheels/cu128}
+        HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+        HTTP_PROXY: ${HTTP_PROXY:-${http_proxy:-}}
+        HTTPS_PROXY: ${HTTPS_PROXY:-${https_proxy:-}}
+        ALL_PROXY: ${ALL_PROXY:-${all_proxy:-}}
+      secrets:
+        - hf_token
     gpus: all
     stdin_open: true
     tty: true
@@ -80,14 +89,21 @@ services:
     gpus: all
     stdin_open: true
     tty: true
-    command: ["shell"]
+    command: ["t2-vla"]
 
   rlinf:
     <<: *tabero-common
     gpus: all
     stdin_open: true
     tty: true
-    command: ["shell"]
+    command: ["rlinf"]
+
+  tabero_x:
+    <<: *tabero-common
+    gpus: all
+    stdin_open: true
+    tty: true
+    command: ["tabero_x"]
 
 volumes:
   isaac-kit-cache:
@@ -96,3 +112,7 @@ volumes:
   isaac-compute-cache:
   isaac-logs:
   isaac-ov-data:
+
+secrets:
+  hf_token:
+    environment: HF_TOKEN
