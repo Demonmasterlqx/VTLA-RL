@@ -33,9 +33,11 @@ x-tabero-common: &tabero-common
     - type: bind
       source: ${TABERO_RESULTS_HOST:-${TABERO_HOST:-.}/results}
       target: /root/VTLA-RL/results
+      read_only: false
     - type: bind
       source: ${TABERO_RECORD_HOST:-${TABERO_HOST:-.}/Record}
       target: /root/VTLA-RL/Record
+      read_only: false
     - type: bind
       source: ${TABERO_ENV_FILE:-.env}
       target: /root/VTLA-RL/.env

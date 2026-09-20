@@ -3,9 +3,15 @@
 本工作区把 IsaacLab、Tabero_X、RLinf 和 T2-VLA 作为一个可复现的研究环境管理。
 宿主机和 Docker 镜像使用相同的仓库分支约定；NVIDIA 驱动始终由宿主机提供。
 
+## 数据与模型
+
+在 [VTLA-RL 训练记录](https://zanpw3z2hb6.feishu.cn/docx/XWEpd2jCZovDAqxJOC8cpATAnwe) 中记录了所有数据与模型链接。
+
 ## 部署
 
 ### uv
+
+> 本地 uv 部署部分未完善
 
 本节说明宿主机本地使用 uv 配置和进入开发环境。三个 uv 环境分别是：
 
@@ -61,7 +67,109 @@ T2-VLA/.venv/bin/python -c 'import openpi; print(openpi.__file__)'
 
 ### docker
 
-#### 构建镜像
+**拉取仓库**
+
+> 由于 Tabero_X 仓库是 private 的，所以拉去之前请保证当前用户 ~/.ssh/config 中连接 github.com 的凭证是有权限的。
+>
+> 如果是公用服务器导致不好直接设置 github.com 可以通过设置环境变量 `GIT_SSH_COMMAND` 解决
+> 
+> ```
+> export GIT_SSH_COMMAND="ssh -i /path/to/github_private_key" 
+> ```
+
+```bash
+git clone --recursive https://github.com/Demonmasterlqx/VTLA-RL.git
+
+# 如果是开发者
+# git clone git@github.com:Demonmasterlqx/VTLA-RL.git
+
+cd VTLA-RL
+
+```
+
+如果已经完成仓库拉去，但是没有克隆子模块
+
+```bash
+cd VTLA-RL
+git submodule update --init --recursive
+```
+
+**初始化文件目录与密钥**
+
+```bash
+
+cd VTLA-RL
+mkdir results
+mkdir models
+mkdir Record
+mkdir datasets
+cp .env.example .env
+
+```
+
+在 [.env](.env) 中完善 huggingface token 以及 wandb token
+
+```
+export HF_TOKEN="XXX"
+export WANDB_API_KEY="XXX"
+```
+
+> results/models/Record/datasets/.env 会在运行时被挂载到镜像中。
+>
+> 一定要在运行镜像之前创建这四个目录，如果让运行镜像时创建会导致宿主机没有足够的权限控制这几个目录
+
+**拉取镜像**
+
+```bash
+docker pull ccr.ccs.tencentyun.com/vtla/vtla:0.4
+```
+
+尝试运行
+
+```bash
+docker compose run --rm shell
+```
+
+能进入 shell 即表示完成
+
+更具体的使用查看 [docker/README.md](docker/README.md) 中的 `训练、导出与评测` 章节
+
+**拉取数据**
+
+在本地安装 hf 客户端，[Command Line Interface (CLI)](https://huggingface.co/docs/huggingface_hub/guides/cli)
+
+> 如果有网络问题，可以设置
+>
+> ```
+> export HF_ENDPOINT=https://hf-mirror.com
+> ```
+>
+> 或者设置网络代理
+>
+> ```bash
+> export http_proxy="http://xxxxx"
+> export https_proxy="http://xxxxx"
+> export HTTP_PROXY="http://xxxxx"
+> export HTTPS_PROXY="http://xxxxx"
+> ```
+
+下载数据样例命令
+
+```bash
+hf download xiangxin0923/realworld_replay_task820_firm_gentle_mixed_current --repo-type dataset --local-dir "./datasets/path/to/target/datasets"
+```
+
+下载模型样例命令
+
+```bash
+hf download Demomasterlqx/VTLA-RL-sft-lora-franka-no-adverb-05-effort --include "step_30000/**" --local-dir "./models/path/to/target/models"
+```
+
+> 注意下载模型的时候需要上 hf check 一下模型是否为我们期望的部分，因为 hf 仓库中会有一些可以续训的检查点
+
+## docker 开发与构建
+
+### 构建镜像
 
 默认镜像为 `ccr.ccs.tencentyun.com/vtla/vtla:0.4`，基础镜像为 Isaac Sim 5.1，
 工作区位于 `/root/VTLA-RL`。镜像使用基础镜像自带的 `/isaac-sim`，并创建
@@ -115,7 +223,7 @@ HF_TOKEN=...
 WANDB_API_KEY=...
 ```
 
-#### 启动容器
+### 启动容器
 
 ```bash
 docker compose run --pull never --rm shell
@@ -145,7 +253,7 @@ docker compose run --rm shell
 直接 `docker run` 时需使用 `--gpus all`、`--ipc host`，并外挂 `.env` 和上述四个目录。
 镜像不包含宿主机 NVIDIA 驱动，运行前需安装 NVIDIA Container Toolkit。
 
-#### 启动训练与测试
+### 启动训练与测试
 
 四个服务共享同一镜像，但入口会按服务加载不同环境：
 
@@ -221,7 +329,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 \
 镜像不要求某个固定的 FFmpeg 小版本，但必须支持 H.264 `libx264` 编码、
 `yuv420p` 像素格式和帧解码；本轮镜像已用实际 mode-6 视频完成帧数一致性校验。
 
-#### 更新和验证
+### 更新和验证
 
 仓库源码在构建时写入镜像；代码更新后应从宿主机工作区重新构建，不在容器内执行
 自动 `git pull`。构建前可以检查 Dockerfile 和 Compose：

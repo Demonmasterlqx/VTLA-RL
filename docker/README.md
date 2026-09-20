@@ -200,30 +200,7 @@ python -c 'import importlib.util; print(importlib.util.find_spec("isaaclab"))'
 下面的命令都从仓库根目录执行，并统一使用已构建镜像，不隐式拉取新镜像：
 
 ```bash
-export TABERO_IMAGE=vtla:env-fix
-export TABERO_MODELS_HOST=/absolute/path/to/models
-export TABERO_DATASETS_HOST=/absolute/path/to/datasets
-export TABERO_RESULTS_HOST=/absolute/path/to/results
-export TABERO_RECORD_HOST="$PWD/Record"
-
-docker compose config --quiet
-```
-
-本镜像已验证的兼容版本是：
-
-| 环境 | PEFT | Torch |
-| --- | --- | --- |
-| T2-VLA | `0.20.0` | `2.7.1+cu128` |
-| RLinf | `0.21.0` | `2.7.1+cu128` |
-
-不要在现有 `.venv` 中就地升级这些包。PIRL 从 RLinf 导出给 T2-VLA 时，bundle
-必须用 T2 兼容的 PEFT 0.20 实现生成；两边版本不同是明确的部署边界，不是待升级项。
-只读核对命令：
-
-```bash
-docker compose run --pull never --rm -T shell shell -lc '
-"$ROOT/T2-VLA/.venv/bin/python" -c "import peft,torch; print(peft.__version__,torch.__version__)"
-"$ROOT/RLinf/.venv/bin/python" -c "import peft,torch; print(peft.__version__,torch.__version__)"'
+export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.4
 ```
 
 所有训练都应放进命名 `tmux` 会话并保存 launcher、日志和退出码。以下训练块应写入
@@ -231,18 +208,247 @@ docker compose run --pull never --rm -T shell shell -lc '
 启动。RLinf 的 GPU 只能通过 `cluster.component_placement` 分配，不要为 RLinf 设置
 `CUDA_VISIBLE_DEVICES`。
 
-### SFT smoke：pi05_base_pytorch + task820 firm mixed
+训练时建议的操作为：
+
+* 在 `results` 中根据实验名创建独立目录。
+* 把 RLinf 对应的完整 `config` 目录复制到实验目录，不使用软链接；本次实验的参数只在副本中修改。
+* 把 Tabero_X 的完整环境 JSON 配置目录复制为实验目录下的 `env`，RL 训练通过 Hydra 显式引用该副本。
+* 配置中通过环境变量提供的值仍在 `docker compose run` 时使用 `-e` 传入。
+
+复制后，每个实验至少保留下列结构：
+
+```text
+results/<RUN>/
+├── config/    # 本次训练使用的完整 RLinf Hydra 配置
+├── env/       # 本次 RL 环境 JSON 配置
+├── launch.sh
+└── logs/
+```
+
+只在创建新实验时执行复制。若 `config` 或 `env` 已存在，应先检查已有实验内容，不要
+用后续 `cp` 命令静默覆盖。
+
+### 指定 RL JSON 环境
+
+RealWorld 环境的 `realworld_config_dir` 参数接收的是**目录**，不是 JSON 文件路径。
+当前 `Isaac-RealWorld-GentleGrasp-XarmUmi-Hybrid-Tactile-v0` 包装器固定读取：
+
+```text
+<realworld_config_dir>/gentle_grasp.json
+```
+
+该包装器同时固定使用 `task_suite=gentle_grasp` 和 `task_id=6`，因此 JSON 中必须包含
+Task 6。实验名中的 `task820` 是数据集/训练实验名称，不应写成环境的 `task_id=820`。
+
+下面以 SFT 配置目录和 Tabero_X 的完整 RealWorld 配置目录为例，建立实验副本。SFT
+本身不会读取 `env`，但仍保留统一的实验目录结构，方便后续 PIRL、DSRL 或 RLT 阶段
+沿用并审计同一套配置：
 
 ```bash
-RUN=task820-no-adverb-sft-smoke
+set -a
+source .env
+set +a
+
+RUN=pi05_base_pytorch_task830_firm_mixed
+export TABERO_RESULTS_HOST="${TABERO_RESULTS_HOST:-$PWD/results}"
+RUN_HOST_DIR="$TABERO_RESULTS_HOST/$RUN"
+
+mkdir -p "$RUN_HOST_DIR"
+test ! -e "$RUN_HOST_DIR/config"
+test ! -e "$RUN_HOST_DIR/env"
+
+cp -a RLinf/examples/sft/config "$RUN_HOST_DIR/config"
+cp -a Tabero_X/benchmarks/datasets/realworld/config "$RUN_HOST_DIR/env"
+
+test -f "$RUN_HOST_DIR/config/realworld_replay_task820_firm_mixed_pi05_tacfield_no_state_smoke.yaml"
+test -s "$RUN_HOST_DIR/env/gentle_grasp.json"
+
+export TRAIN_CONFIG_DIR="/root/VTLA-RL/results/$RUN/config"
+export RL_ENV_DIR="/root/VTLA-RL/results/$RUN/env"
+```
+
+PIRL、DSRL 或其他 embodiment 训练应把复制源换成完整的
+`RLinf/examples/embodiment/config` 目录。RLT Stage 2 的专用 YAML 也应放在本次复制出的
+`config` 目录内。
+
+如果要使用完整副本中的 `final_vtla_rl_config/gentle_grasp.json`，只需把容器路径改为：
+
+```bash
+export RL_ENV_DIR="/root/VTLA-RL/results/$RUN/env/final_vtla_rl_config"
+```
+
+若要选择非标准文件名（例如
+[`gentle_grasp_0.5griper.json`](../Tabero_X/benchmarks/datasets/realworld/config/gentle_grasp_0.5griper.json)），
+应在**实验副本**中把它复制为包装器要求的固定文件名，不要修改 Tabero_X 源目录：
+
+```bash
+cp \
+  "$RUN_HOST_DIR/env/gentle_grasp_0.5griper.json" \
+  "$RUN_HOST_DIR/env/gentle_grasp.json"
+test -s "$RUN_HOST_DIR/env/gentle_grasp.json"
+```
+
+在 `docker compose run` 参数中把配置副本和环境副本的容器路径传进去：
+
+```bash
+-e TRAIN_CONFIG_DIR="$TRAIN_CONFIG_DIR" \
+-e RL_ENV_DIR="$RL_ENV_DIR"
+```
+
+在 PIRL 或 DSRL 的 Python 命令末尾同时覆盖 train/eval；不要只覆盖其中一个，否则
+验证阶段可能继续使用训练 YAML 中的旧路径：
+
+```bash
+env.train.init_params.realworld_config_dir="$RL_ENV_DIR" \
+env.eval.init_params.realworld_config_dir="$RL_ENV_DIR"
+```
+
+如果原训练 YAML 中的 Tabero_X 路径来自其他机器，还应在同一条命令中改为镜像内
+路径：
+
+```bash
+env.train.init_params.extension_path="$ROOT/Tabero_X/source/tac_manip" \
+env.eval.init_params.extension_path="$ROOT/Tabero_X/source/tac_manip" \
+env.train.init_params.realworld_assets_dir="$ROOT/Tabero_X/benchmarks/datasets/realworld/USD" \
+env.eval.init_params.realworld_assets_dir="$ROOT/Tabero_X/benchmarks/datasets/realworld/USD"
+```
+
+RLT Stage 2 使用复制到 `config` 目录中的独立 YAML 时，可以在 YAML 中引用同一个
+环境变量：
+
+```yaml
+env:
+  train:
+    init_params:
+      realworld_config_dir: ${oc.env:RL_ENV_DIR}
+  eval:
+    init_params:
+      realworld_config_dir: ${oc.env:RL_ENV_DIR}
+```
+
+启动时仍需传入 `-e RL_ENV_DIR="$RL_ENV_DIR"`。RL JSON 只决定仿真环境配置；GPU
+分配仍必须使用 `cluster.component_placement`，不能用 `CUDA_VISIBLE_DEVICES` 代替。
+
+需要提前计算 数据集的 norm_state
+
+```bash
+export TABERO_DATASETS_HOST="${TABERO_DATASETS_HOST:-$PWD/datasets}"
+export TABERO_RESULTS_HOST="${TABERO_RESULTS_HOST:-$PWD/results}"
+
+mkdir -p "$TABERO_RESULTS_HOST/$RUN/norm_stats"
+
 docker compose run --pull never --rm -T \
+  -e NORM_RUN="$RUN" \
+  -e CUDA_VISIBLE_DEVICES="7" \
+  rlinf rlinf -lc '
+set -euo pipefail
+
+NORM_DIR="$ROOT/results/$NORM_RUN/norm_stats"
+mkdir -p "$NORM_DIR"
+
+python toolkits/lerobot/calculate_norm_stats.py \
+  --config-name pi05_lora_tacfield_tabero_no_state \
+  --repo-id "$ROOT/datasets/realworld_replay_task820_firm_mixed" \
+  --output-dir "$NORM_DIR" \
+  2>&1 | tee "$ROOT/results/$NORM_RUN/norm_stats.log"
+
+test -s "$NORM_DIR/norm_stats.json"
+printf "norm_stats=%s\n" "$NORM_DIR/norm_stats.json"'
+```
+
+启动训练
+
+```bash
+NORM_STATS="/root/VTLA-RL/results/$RUN/norm_stats/norm_stats.json"
+
+docker compose run --pull never --rm -T \
+  -e TRAIN_CONFIG_DIR="$TRAIN_CONFIG_DIR" \
   -e TASK820_MIXED_TACFIELD_RUN_DIR="/root/VTLA-RL/results/$RUN" \
   -e TASK820_MIXED_TACFIELD_RUN_NAME="$RUN" \
+  -e TASK820_MIXED_TACFIELD_NORM_STATS="$NORM_STATS" \
   -e TASK820_MIXED_TACFIELD_CHECKPOINT_ROOT="/root/VTLA-RL/results/$RUN/checkpoints" \
   -e WANDB_RUN_ID="$RUN" -e WANDB_RESUME=allow \
   rlinf rlinf -lc '
 python examples/sft/train_vla_sft.py \
-  --config-path "$ROOT/RLinf/examples/sft/config" \
+  --config-path "$TRAIN_CONFIG_DIR" \
+  --config-name realworld_replay_task820_firm_mixed_pi05_tacfield_no_state_smoke \
+  "cluster.component_placement.actor=\"1,7\"" \
+  runner.max_steps=1 runner.save_interval=1 \
+  actor.micro_batch_size=1 actor.global_batch_size=2 \
+  actor.model.precision=bf16 \
+  data.train_data_paths.0.dataset_path="$ROOT/datasets/realworld_replay_task820_firm_mixed" \
+  actor.model.model_path="$ROOT/models/pi05_base_pytorch" \
+  actor.fsdp_config.trainable_checkpoint_metadata.target_global_step=1'
+```
+
+### SFT smoke：pi05_base_pytorch + task820 firm mixed
+
+先用与 SFT 相同的 RLinf/OpenPI data transform 计算归一化统计。Compose 将
+`datasets` 只读挂载到容器，因此统计文件应写入可写的 `results`，不要尝试写回
+数据集目录。以下命令均从仓库根目录执行：
+
+```bash
+set -a
+source .env
+set +a
+
+export TABERO_DATASETS_HOST="${TABERO_DATASETS_HOST:-$PWD/datasets}"
+export TABERO_RESULTS_HOST="${TABERO_RESULTS_HOST:-$PWD/results}"
+
+RUN=task820-no-adverb-sft-smoke
+mkdir -p "$TABERO_RESULTS_HOST/$RUN/norm_stats"
+
+docker compose run --pull never --rm -T \
+  -e NORM_RUN="$RUN" \
+  rlinf rlinf -lc '
+set -euo pipefail
+
+NORM_DIR="$ROOT/results/$NORM_RUN/norm_stats"
+mkdir -p "$NORM_DIR"
+
+python toolkits/lerobot/calculate_norm_stats.py \
+  --config-name pi05_lora_tacfield_tabero_no_state \
+  --repo-id "$ROOT/datasets/realworld_replay_task820_firm_mixed" \
+  --output-dir "$NORM_DIR" \
+  2>&1 | tee "$ROOT/results/$NORM_RUN/norm_stats.log"
+
+test -s "$NORM_DIR/norm_stats.json"
+printf "norm_stats=%s\n" "$NORM_DIR/norm_stats.json"'
+```
+
+该脚本先应用 `TaberoTacFieldInputs` 和 action delta transform，再统计
+`state`、`actions`、`tactile_prefix` 各维度的 `mean`、`std`、`q01`、`q99`。
+前 6 维 action 在统计前会减去当前 state 的前 6 维；Pi0.5 训练实际使用
+`q01`/`q99` 将数据缩放到约 `[-1, 1]`：
+
+```text
+x_norm = 2 * (x - q01) / (q99 - q01 + 1e-6) - 1
+```
+
+虽然该配置是 `no_state`，`state` 仍用于构造 action delta，也会写入统计文件，
+但不会作为 Pi0.5 的模型条件输入。数据集的 `meta/episodes_stats.jsonl` 是原始的
+逐 episode 统计，不能替代这里生成的 OpenPI `norm_stats.json`。
+
+确认上一步成功后，使用同一文件启动 smoke：
+
+```bash
+RUN=task820-no-adverb-sft-smoke
+TRAIN_CONFIG_DIR="/root/VTLA-RL/results/$RUN/config"
+NORM_STATS="/root/VTLA-RL/results/$RUN/norm_stats/norm_stats.json"
+
+test -d "${TABERO_RESULTS_HOST:-$PWD/results}/$RUN/config"
+test -s "${TABERO_RESULTS_HOST:-$PWD/results}/$RUN/norm_stats/norm_stats.json"
+
+docker compose run --pull never --rm -T \
+  -e TRAIN_CONFIG_DIR="$TRAIN_CONFIG_DIR" \
+  -e TASK820_MIXED_TACFIELD_RUN_DIR="/root/VTLA-RL/results/$RUN" \
+  -e TASK820_MIXED_TACFIELD_RUN_NAME="$RUN" \
+  -e TASK820_MIXED_TACFIELD_NORM_STATS="$NORM_STATS" \
+  -e TASK820_MIXED_TACFIELD_CHECKPOINT_ROOT="/root/VTLA-RL/results/$RUN/checkpoints" \
+  -e WANDB_RUN_ID="$RUN" -e WANDB_RESUME=allow \
+  rlinf rlinf -lc '
+python examples/sft/train_vla_sft.py \
+  --config-path "$TRAIN_CONFIG_DIR" \
   --config-name realworld_replay_task820_firm_mixed_pi05_tacfield_no_state_smoke \
   "cluster.component_placement.actor=\"1,7\"" \
   runner.max_steps=1 runner.save_interval=1 \
@@ -260,11 +466,20 @@ python examples/sft/train_vla_sft.py \
 
 ```bash
 RUN=task820-no-adverb-pirl-smoke
+TRAIN_CONFIG_DIR="/root/VTLA-RL/results/$RUN/config"
+RL_ENV_DIR="/root/VTLA-RL/results/$RUN/env"
+
+test -d "${TABERO_RESULTS_HOST:-$PWD/results}/$RUN/config"
+test -s "${TABERO_RESULTS_HOST:-$PWD/results}/$RUN/env/gentle_grasp.json"
+
 docker compose run --pull never --rm -T \
+  -e TRAIN_CONFIG_DIR="$TRAIN_CONFIG_DIR" \
+  -e RL_ENV_DIR="$RL_ENV_DIR" \
   -e WANDB_RUN_ID="$RUN" -e WANDB_RESUME=allow \
   -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   rlinf rlinf -lc '
 python examples/embodiment/train_embodied_agent.py \
+  --config-path "$TRAIN_CONFIG_DIR" \
   --config-name isaaclab_pi05_pirl_task820_tacfield_8gpu_vtla_rl_benchmark \
   "cluster.component_placement.actor=\"1,6\"" \
   "cluster.component_placement.rollout=\"7\"" \
@@ -276,6 +491,12 @@ python examples/embodiment/train_embodied_agent.py \
   env.train.total_num_envs=2 env.train.rollout_epoch=1 \
   env.train.max_steps_per_rollout_epoch=300 \
   env.train.max_episode_steps=300 env.train.init_params.max_episode_steps=300 \
+  env.train.init_params.realworld_config_dir="$RL_ENV_DIR" \
+  env.eval.init_params.realworld_config_dir="$RL_ENV_DIR" \
+  env.train.init_params.extension_path="$ROOT/Tabero_X/source/tac_manip" \
+  env.eval.init_params.extension_path="$ROOT/Tabero_X/source/tac_manip" \
+  env.train.init_params.realworld_assets_dir="$ROOT/Tabero_X/benchmarks/datasets/realworld/USD" \
+  env.eval.init_params.realworld_assets_dir="$ROOT/Tabero_X/benchmarks/datasets/realworld/USD" \
   rollout.model.model_path="$ROOT/models/VTLA-RL-sft-lora-xarm-no-adverb/global_step_30000/model" \
   actor.model.model_path="$ROOT/models/VTLA-RL-sft-lora-xarm-no-adverb/global_step_30000/model" \
   actor.micro_batch_size=1 actor.global_batch_size=2 \
@@ -287,12 +508,21 @@ python examples/embodiment/train_embodied_agent.py \
 
 ```bash
 RUN=task6-no-adverb-dsrl-smoke
+TRAIN_CONFIG_DIR="/root/VTLA-RL/results/$RUN/config"
+RL_ENV_DIR="/root/VTLA-RL/results/$RUN/env"
+
+test -d "${TABERO_RESULTS_HOST:-$PWD/results}/$RUN/config"
+test -s "${TABERO_RESULTS_HOST:-$PWD/results}/$RUN/env/gentle_grasp.json"
+
 docker compose run --pull never --rm -T \
+  -e TRAIN_CONFIG_DIR="$TRAIN_CONFIG_DIR" \
+  -e RL_ENV_DIR="$RL_ENV_DIR" \
   -e WANDB_RUN_ID="$RUN" -e WANDB_RESUME=allow \
   -e PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
   -e NCCL_SHM_DISABLE=1 -e NCCL_P2P_DISABLE=1 -e NCCL_SOCKET_IFNAME=lo \
   rlinf rlinf -lc '
 python examples/embodiment/train_async.py \
+  --config-path "$TRAIN_CONFIG_DIR" \
   --config-name isaaclab_pi05_dsrl_task820_tacfield_8gpu_smoke \
   "cluster.component_placement.actor=\"3\"" \
   "cluster.component_placement.rollout=\"4\"" \
@@ -304,6 +534,12 @@ python examples/embodiment/train_async.py \
   env.train.total_num_envs=1 env.train.rollout_epoch=1 \
   env.train.max_steps_per_rollout_epoch=20 \
   env.train.max_episode_steps=20 env.train.init_params.max_episode_steps=20 \
+  env.train.init_params.realworld_config_dir="$RL_ENV_DIR" \
+  env.eval.init_params.realworld_config_dir="$RL_ENV_DIR" \
+  env.train.init_params.extension_path="$ROOT/Tabero_X/source/tac_manip" \
+  env.eval.init_params.extension_path="$ROOT/Tabero_X/source/tac_manip" \
+  env.train.init_params.realworld_assets_dir="$ROOT/Tabero_X/benchmarks/datasets/realworld/USD" \
+  env.eval.init_params.realworld_assets_dir="$ROOT/Tabero_X/benchmarks/datasets/realworld/USD" \
   rollout.model.model_path="$ROOT/models/VTLA-RL-sft-lora-xarm-no-adverb/global_step_30000/model" \
   actor.model.model_path="$ROOT/models/VTLA-RL-sft-lora-xarm-no-adverb/global_step_30000/model" \
   actor.micro_batch_size=1 actor.global_batch_size=1 \
@@ -317,13 +553,19 @@ python examples/embodiment/train_async.py \
 
 ```bash
 RUN=task820-no-adverb-rlt-stage1-smoke
+TRAIN_CONFIG_DIR="/root/VTLA-RL/results/$RUN/config"
+
+test -d "${TABERO_RESULTS_HOST:-$PWD/results}/$RUN/config"
+
 docker compose run --pull never --rm -T \
+  -e TRAIN_CONFIG_DIR="$TRAIN_CONFIG_DIR" \
   -e TASK820_MIXED_TACFIELD_RUN_DIR="/root/VTLA-RL/results/$RUN" \
   -e TASK820_MIXED_TACFIELD_RUN_NAME="$RUN" \
   -e TASK820_MIXED_TACFIELD_CHECKPOINT_ROOT="/root/VTLA-RL/results/$RUN/checkpoints" \
   -e WANDB_RUN_ID="$RUN" -e WANDB_RESUME=allow \
   rlinf rlinf -lc '
 python examples/sft/train_vla_sft.py \
+  --config-path "$TRAIN_CONFIG_DIR" \
   --config-name realworld_replay_task820_firm_mixed_pi05_tacfield_no_state_smoke \
   "cluster.component_placement.actor=\"3,7\"" \
   runner.max_steps=1 runner.save_interval=1 \
@@ -348,19 +590,27 @@ python examples/sft/train_vla_sft.py \
 
 ### RLT Stage 2
 
-Stage 2 的配置应先保存到宿主机结果目录，例如
-`$TABERO_RESULTS_HOST/$RUN/rlt_stage2.yaml`。配置内用
+Stage 2 的配置应先保存到本次复制出的配置目录，例如
+`$TABERO_RESULTS_HOST/$RUN/config/rlt_stage2.yaml`。配置内用
 `cluster.component_placement` 指定 actor/env 和 rollout GPU，并指向 Stage 1 的 final
 checkpoint；不要用环境变量替代 GPU placement。
 
 ```bash
 RUN=task6-no-adverb-rlt-stage2-smoke
+TRAIN_CONFIG_DIR="/root/VTLA-RL/results/$RUN/config"
+RL_ENV_DIR="/root/VTLA-RL/results/$RUN/env"
+
+test -f "${TABERO_RESULTS_HOST:-$PWD/results}/$RUN/config/rlt_stage2.yaml"
+test -s "${TABERO_RESULTS_HOST:-$PWD/results}/$RUN/env/gentle_grasp.json"
+
 docker compose run --pull never --rm -T \
+  -e TRAIN_CONFIG_DIR="$TRAIN_CONFIG_DIR" \
+  -e RL_ENV_DIR="$RL_ENV_DIR" \
   -e WANDB_RUN_ID="$RUN" -e WANDB_RESUME=allow \
   -e NCCL_SHM_DISABLE=1 -e NCCL_P2P_DISABLE=1 -e NCCL_SOCKET_IFNAME=lo \
   rlinf rlinf -lc '
 python examples/embodiment/train_embodied_agent.py \
-  --config-path "$ROOT/results/'"$RUN"'" \
+  --config-path "$TRAIN_CONFIG_DIR" \
   --config-name rlt_stage2'
 ```
 
