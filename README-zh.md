@@ -121,7 +121,7 @@ export WANDB_API_KEY="XXX"
 **拉取镜像**
 
 ```bash
-docker pull ccr.ccs.tencentyun.com/vtla/vtla:0.4
+docker pull ccr.ccs.tencentyun.com/vtla/vtla:0.5
 ```
 
 尝试运行
@@ -171,7 +171,7 @@ hf download Demomasterlqx/VTLA-RL-sft-lora-franka-no-adverb-05-effort --include 
 
 ### 构建镜像
 
-默认镜像为 `ccr.ccs.tencentyun.com/vtla/vtla:0.4`，基础镜像为 Isaac Sim 5.1，
+默认镜像为 `ccr.ccs.tencentyun.com/vtla/vtla:0.5`，基础镜像为 Isaac Sim 5.1，
 工作区位于 `/root/VTLA-RL`。镜像使用基础镜像自带的 `/isaac-sim`，并创建
 `/root/VTLA-RL/isaacsim -> /isaac-sim`，不会复制第二份 Isaac Sim。
 
@@ -186,7 +186,7 @@ export ALL_PROXY=
 export PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 export PYTORCH_INDEX_URL=https://mirror.sjtu.edu.cn/pytorch-wheels/cu128
 export HF_ENDPOINT=https://hf-mirror.com
-export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.4
+export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.5
 
 BUILDKIT_PROGRESS=plain docker compose build
 ```
@@ -345,5 +345,5 @@ docker compose config --quiet
 
 ```bash
 docker login ccr.ccs.tencentyun.com
-docker push ccr.ccs.tencentyun.com/vtla/vtla:0.4
+docker push ccr.ccs.tencentyun.com/vtla/vtla:0.5
 ```

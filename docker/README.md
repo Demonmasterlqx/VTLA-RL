@@ -3,7 +3,7 @@
 默认镜像名：
 
 ```text
-ccr.ccs.tencentyun.com/vtla/vtla:0.4
+ccr.ccs.tencentyun.com/vtla/vtla:0.5
 ```
 
 镜像工作区位于 `/root/VTLA-RL`，包含 IsaacLab、T2-VLA、Tabero_X、RLinf，
@@ -63,7 +63,7 @@ export ALL_PROXY=
 export PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 export PYTORCH_INDEX_URL=https://mirror.sjtu.edu.cn/pytorch-wheels/cu128
 export HF_ENDPOINT=https://hf-mirror.com
-export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.4
+export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.5
 
 BUILDKIT_PROGRESS=plain docker compose build
 ```
@@ -99,7 +99,7 @@ docker buildx du
 
 ```bash
 docker login ccr.ccs.tencentyun.com
-docker push ccr.ccs.tencentyun.com/vtla/vtla:0.4
+docker push ccr.ccs.tencentyun.com/vtla/vtla:0.5
 ```
 
 ## 启动
@@ -161,7 +161,7 @@ docker run --rm -it --gpus all --network host --ipc host \
   -v "$PWD/models:/root/VTLA-RL/models:ro" \
   -v "$PWD/results:/root/VTLA-RL/results" \
   -v "$PWD/Record:/root/VTLA-RL/Record" \
-  ccr.ccs.tencentyun.com/vtla/vtla:0.4 shell
+  ccr.ccs.tencentyun.com/vtla/vtla:0.5 shell
 ```
 
 ## 更新代码
@@ -200,7 +200,7 @@ python -c 'import importlib.util; print(importlib.util.find_spec("isaaclab"))'
 下面的命令都从仓库根目录执行，并统一使用已构建镜像，不隐式拉取新镜像：
 
 ```bash
-export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.4
+export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.5
 ```
 
 所有训练都应放进命名 `tmux` 会话并保存 launcher、日志和退出码。以下训练块应写入

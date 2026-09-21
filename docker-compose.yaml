@@ -1,7 +1,7 @@
 name: tabero
 
 x-tabero-common: &tabero-common
-  image: ${TABERO_IMAGE:-ccr.ccs.tencentyun.com/vtla/vtla:0.4}
+  image: ${TABERO_IMAGE:-ccr.ccs.tencentyun.com/vtla/vtla:0.5}
   network_mode: host
   ipc: host
   shm_size: "16gb"

@@ -28,6 +28,7 @@ If running inside the container:
 * Verify that the code inside the container is synchronized with the local repository.
 * If the container code differs from the local code, do **not** proceed automatically.
 * Clearly report the mismatch and confirm with the user which version should be used or whether synchronization should be performed first.
+* Follow `docker/README.md` for basic launch operations.
 
 ## Experiment Records
 

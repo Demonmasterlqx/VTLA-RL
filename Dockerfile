@@ -140,6 +140,7 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
 # dependencies are installed into IsaacLab/.venv instead of Isaac Sim's Kit
 # Python.  Keep network asset retrieval out of this layer so a transient
 # Hugging Face failure does not invalidate the completed environment install.
+ARG TORCH_SCATTER_WHEEL_URL=https://data.pyg.org/whl/torch-2.7.0%2Bcu128/torch_scatter-2.1.2%2Bpt27cu128-cp311-cp311-linux_x86_64.whl
 RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=cache,id=vtla-pip-cache,target=/root/.cache/pip,sharing=locked \
     export HTTP_PROXY="${HTTP_PROXY}" \
@@ -162,10 +163,13 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
        ./IsaacLab/isaaclab.sh --install none \
     && uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
        --requirement /root/VTLA-RL/Tabero_X/requirements.txt \
+    && PYG_WHEEL=/tmp/torch_scatter-2.1.2+pt27cu128-cp311-cp311-linux_x86_64.whl \
+    && curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+       --connect-timeout 20 --max-time 180 \
+       --output "${PYG_WHEEL}" "${TORCH_SCATTER_WHEEL_URL}" \
     && uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
-       --no-index --no-deps \
-       --find-links https://data.pyg.org/whl/torch-2.7.0+cu128.html \
-       'torch-scatter==2.1.2+pt27cu128' \
+       --no-index --no-deps "${PYG_WHEEL}" \
+    && rm "${PYG_WHEEL}" \
     && uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
        -e /root/VTLA-RL/Tabero_X/source/tac_manip
 
@@ -315,10 +319,13 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
        "torch==${RLINF_TORCH_VERSION}" \
        "torchvision==${RLINF_TORCHVISION_VERSION}" \
        "torchaudio==${RLINF_TORCHAUDIO_VERSION}" \
+    && PYG_WHEEL=/tmp/torch_scatter-2.1.2+pt27cu128-cp311-cp311-linux_x86_64.whl \
+    && curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+       --connect-timeout 20 --max-time 180 \
+       --output "${PYG_WHEEL}" "${TORCH_SCATTER_WHEEL_URL}" \
     && uv pip install --python /root/VTLA-RL/RLinf/.venv/bin/python \
-       --no-index --no-deps \
-       --find-links https://data.pyg.org/whl/torch-2.7.0+cu128.html \
-       'torch-scatter==2.1.2+pt27cu128' \
+       --no-index --no-deps "${PYG_WHEEL}" \
+    && rm "${PYG_WHEEL}" \
     && uv pip install --python /root/VTLA-RL/RLinf/.venv/bin/python \
        --index-url "${PYPI_INDEX_URL}" \
        --constraint /tmp/rlinf-constraints.txt \
@@ -605,6 +612,27 @@ print(
     f"objects={len(object_types)} revision={os.environ['LIBERO_REVISION']}"
 )
 PY
+
+# Torch 2.7.x and T2-VLA's uv.lock require NCCL 2.26.2.  Install the tested
+# NCCL 2.27.7 runtime after all dependency resolution so later installs cannot
+# replace it.  The override intentionally leaves Torch's package metadata and
+# the T2-VLA lock incompatible; another uv sync will restore the locked wheel.
+RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
+    export HTTP_PROXY="${HTTP_PROXY}" \
+    HTTPS_PROXY="${HTTPS_PROXY}" \
+    ALL_PROXY="${ALL_PROXY}" \
+    http_proxy="${HTTP_PROXY}" \
+    https_proxy="${HTTPS_PROXY}" \
+    all_proxy="${ALL_PROXY}" \
+    && for python in \
+         /root/VTLA-RL/IsaacLab/.venv/bin/python \
+         /root/VTLA-RL/T2-VLA/.venv/bin/python \
+         /root/VTLA-RL/RLinf/.venv/bin/python; do \
+         uv pip install --no-deps --python "${python}" \
+           --index-url "${PYPI_INDEX_URL}" 'nvidia-nccl-cu12==2.27.7' \
+         && "${python}" -c 'from importlib.metadata import version; assert version("nvidia-nccl-cu12") == "2.27.7"' \
+         || exit 1; \
+       done
 
 ENTRYPOINT ["/root/VTLA-RL/docker/entrypoint.sh"]
 CMD ["shell"]
