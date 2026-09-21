@@ -454,5 +454,157 @@ RUN mkdir -p /root/VTLA-RL/datasets /root/VTLA-RL/models /root/VTLA-RL/results /
     && ln -sfn /root/VTLA-RL /data/home/sim6g/code/tabero \
     && chmod +x /root/VTLA-RL/docker/entrypoint.sh /root/VTLA-RL/docker/env_setup/*.sh
 
+# Materialize the Libero USD bundle in the final layer.  The source repository
+# is pinned independently from the Tabero_X code so rebuilding this fix can
+# reuse every dependency layer above it.
+ARG LIBERO_ASSET_REPO_ID=china-sae-robotics/IsaacLabPlayGround_Dataset
+ARG LIBERO_ASSET_REVISION=803e10a630b8cdc0a5ea032bb162de92cb43a9bf
+ARG LIBERO_HTTP_PROXY
+ARG LIBERO_HTTPS_PROXY
+ENV LIBERO_ASSETS_DATA_DIR=/root/VTLA-RL/Tabero_X/benchmarks/datasets/libero/USD
+RUN --mount=type=cache,id=vtla-libero-assets,target=/root/.cache/libero-assets,sharing=locked \
+    --mount=type=secret,id=hf_token \
+    export HTTP_PROXY="${LIBERO_HTTP_PROXY:-${HTTP_PROXY}}" \
+    HTTPS_PROXY="${LIBERO_HTTPS_PROXY:-${HTTPS_PROXY}}" \
+    ALL_PROXY="${ALL_PROXY}" \
+    http_proxy="${HTTP_PROXY}" \
+    https_proxy="${HTTPS_PROXY}" \
+    all_proxy="${ALL_PROXY}" \
+    HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}" \
+    HF_HUB_DISABLE_XET=1 \
+    HF_HUB_ETAG_TIMEOUT=60 \
+    HF_HUB_DOWNLOAD_TIMEOUT=60 \
+    LIBERO_REPO_ID="${LIBERO_ASSET_REPO_ID}" \
+    LIBERO_REVISION="${LIBERO_ASSET_REVISION}" \
+    && if [[ -s /run/secrets/hf_token ]]; then \
+         export HF_TOKEN="$(cat /run/secrets/hf_token)"; \
+       fi \
+    && cd /root/VTLA-RL/Tabero_X \
+    && /root/VTLA-RL/IsaacLab/.venv/bin/python - <<'PY'
+import json
+import os
+import shutil
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote
+from pathlib import Path
+
+repo_root = Path.cwd()
+asset_store = Path("/root/.cache/libero-assets")
+asset_root = repo_root / "benchmarks/datasets/libero/USD"
+endpoint = os.environ["HF_ENDPOINT"].rstrip("/")
+repo_id = os.environ["LIBERO_REPO_ID"]
+revision = os.environ["LIBERO_REVISION"]
+download_root = asset_store / "raw"
+metadata_url = (
+    f"{endpoint}/api/datasets/{repo_id}/tree/{revision}/"
+    f"{quote('libero/USD', safe='')}?recursive=true"
+)
+metadata = subprocess.run(
+    [
+        "curl",
+        "--fail",
+        "--location",
+        "--retry",
+        "5",
+        "--retry-delay",
+        "2",
+        "--retry-all-errors",
+        "--connect-timeout",
+        "30",
+        "--max-time",
+        "120",
+        "--silent",
+        "--show-error",
+        metadata_url,
+    ],
+    check=True,
+    capture_output=True,
+    text=True,
+)
+repo_files = [entry for entry in json.loads(metadata.stdout) if entry.get("type") == "file"]
+if not repo_files:
+    raise FileNotFoundError("Hub revision contains no libero/USD files")
+def download_entry(entry):
+    relative_path = Path(entry["path"])
+    destination = download_root / relative_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    expected_size = entry.get("size")
+    if destination.is_file() and expected_size is not None and destination.stat().st_size == expected_size:
+        return
+    url = (
+        f"{endpoint}/datasets/{repo_id}/resolve/{revision}/"
+        f"{quote(entry['path'], safe='/')}"
+    )
+    command = [
+        "curl",
+        "--fail",
+        "--location",
+        "--retry",
+        "5",
+        "--retry-delay",
+        "2",
+        "--retry-all-errors",
+        "--connect-timeout",
+        "30",
+        "--max-time",
+        "900",
+        "--continue-at",
+        "-",
+        "--output",
+        str(destination),
+        "--silent",
+        "--show-error",
+    ]
+    command.append(url)
+    subprocess.run(command, check=True)
+    if expected_size is not None and destination.stat().st_size != expected_size:
+        raise RuntimeError(
+            f"size mismatch for {entry['path']}: "
+            f"expected {expected_size}, found {destination.stat().st_size}"
+        )
+
+
+with ThreadPoolExecutor(max_workers=4) as executor:
+    list(executor.map(download_entry, repo_files))
+
+asset_root.parent.mkdir(parents=True, exist_ok=True)
+shutil.copytree(download_root / "libero/USD", asset_root, dirs_exist_ok=True)
+
+expected_hash = "63dfcc779e931529f9ab5e248ab316cc"
+expected_file_count = 121
+expected_total_bytes = 144866192
+hash_file = asset_root / ".asset_hash"
+if hash_file.read_text(encoding="utf-8").strip() != expected_hash:
+    raise RuntimeError(f"unexpected Libero asset hash in {hash_file}")
+
+files = [path for path in asset_root.rglob("*") if path.is_file()]
+if any(path.is_symlink() for path in asset_root.rglob("*")):
+    raise RuntimeError("Libero USD bundle contains symlinks")
+if len(files) != expected_file_count:
+    raise RuntimeError(f"expected {expected_file_count} Libero files, found {len(files)}")
+total_bytes = sum(path.stat().st_size for path in files)
+if total_bytes != expected_total_bytes:
+    raise RuntimeError(f"expected {expected_total_bytes} Libero bytes, found {total_bytes}")
+
+config_root = repo_root / "benchmarks/datasets/libero/config"
+object_types = set()
+for config_path in sorted(config_root.glob("libero_*.json")):
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    for task in config.get("tasks", []):
+        object_types.update(info.get("type") for info in task.get("objects", {}).values())
+missing = sorted(
+    object_type
+    for object_type in object_types
+    if not (asset_root / object_type / f"{object_type}.usd").is_file()
+)
+if missing:
+    raise FileNotFoundError("missing Libero USD objects: " + ", ".join(missing))
+print(
+    f"Libero USD assets ready: files={len(files)} bytes={total_bytes} "
+    f"objects={len(object_types)} revision={os.environ['LIBERO_REVISION']}"
+)
+PY
+
 ENTRYPOINT ["/root/VTLA-RL/docker/entrypoint.sh"]
 CMD ["shell"]
