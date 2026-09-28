@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import subprocess
 import sys
@@ -170,7 +171,7 @@ def validate_experiment(
     )
     if exp_idx is not None and exp_dir.name != f"exp_{exp_idx:03d}":
         errors.append(f"{label} directory name does not match exp_idx={exp_idx}")
-    if exp_meta.get("end_reason") not in END_REASONS:
+    if exp_meta.get("end_reason") not in (*END_REASONS, "async_error"):
         errors.append(f"{label} invalid end_reason={exp_meta.get('end_reason')!r}")
     if not isinstance(exp_meta.get("success"), bool):
         errors.append(f"{label} success must be bool")
@@ -186,7 +187,8 @@ def validate_experiment(
             )
 
     rows = read_jsonl(exp_dir / "forces.jsonl", errors)
-    replan_steps = as_int(run_meta.get("replan_steps"), f"{artifact_root} replan_steps", errors)
+    is_async = run_meta.get("inference_mode", "sync") == "async"
+    replan_steps = None if is_async else as_int(run_meta.get("replan_steps"), f"{artifact_root} replan_steps", errors)
     for row_no, row in enumerate(rows):
         row_label = f"{exp_dir}/forces.jsonl row {row_no + 1}"
         require_keys(
@@ -197,6 +199,28 @@ def validate_experiment(
         )
         if row.get("frame") != row_no:
             errors.append(f"{row_label} frame={row.get('frame')!r}, expected {row_no}")
+        if is_async:
+            try:
+                dt = float(run_meta["action_dt"])
+                before, after = float(row["sim_ts_before"]), float(row["sim_ts_after"])
+                target = float(row["target_sim_ts"])
+                assert dt > 0 and all(math.isfinite(v) for v in (dt, before, after, target))
+                assert row["control_step"] == row_no
+                assert math.isclose(after - before, dt, rel_tol=0, abs_tol=1e-7)
+                assert math.isclose(target, after, rel_tol=0, abs_tol=1e-7)
+                if row_no:
+                    assert math.isclose(before, rows[row_no - 1]["sim_ts_after"], rel_tol=0, abs_tol=1e-7)
+                sources = row["trajectory"]["contributions"]
+                assert sources and row["trajectory"]["status"] == "active"
+                assert abs(sum(c["weight"] for c in sources) - 1) < 1e-6
+                for c in sources:
+                    assert c["master_ts"] <= before + 1e-7
+                    assert c["execution_origin_ts"] == c["master_ts"]
+                    lo, hi = c["source_indices"]
+                    source_time = c["master_ts"] + (lo + (hi - lo) * c["source_fraction"] + 1) * dt
+                    assert math.isclose(source_time, target, rel_tol=0, abs_tol=1e-7)
+            except (KeyError, TypeError, ValueError, AssertionError) as exc:
+                errors.append(f"{row_label} invalid async control timeline: {exc}")
         for key in ("task_suite", "task_id", "exp_idx"):
             if row.get(key) != exp_meta.get(key):
                 errors.append(
@@ -213,6 +237,20 @@ def validate_experiment(
                 errors.append(
                     f"{row_label} replan_i={row.get('replan_i')!r}, expected {expected_replan}"
                 )
+
+    if is_async:
+        events = read_jsonl(exp_dir / "async_events.jsonl", errors)
+        last_admitted = None
+        for event in events:
+            if event.get("kind") == "admission" and event.get("admitted"):
+                try:
+                    ts = float(event["observation_sim_ts"])
+                    if last_admitted is not None:
+                        assert ts > last_admitted
+                        assert ts - last_admitted >= float(run_meta["async_min_chunk_obs_gap_sec"]) - 1e-9
+                    last_admitted = ts
+                except (KeyError, TypeError, ValueError, AssertionError):
+                    errors.append(f"{label} invalid async chunk admission gap")
 
     video_name = exp_meta.get("video_file")
     video_path = exp_dir / video_name if isinstance(video_name, str) and video_name else exp_dir / "preview.mp4"
