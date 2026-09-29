@@ -53,6 +53,12 @@ Each report should include:
 
 * Before running an evaluation, check whether an existing script already supports the task. Prefer existing scripts whenever possible.
 * Training runs must be monitored throughout execution, with logs properly recorded.
+* Before test/training, ask user to verify where the model input is `no-state` or `state`
+* Before simulation test, ask user to verify whether the infer model is `async` or `sync`
+* Before test/training, ask user to verify the env used in RLinf/Tabero_x
+* After eval, the quantizable result should be reported in these table formal:
+    model(lora) env target_object successes/episodes success rate AG MG AA MA
+
 
 ## Code Changes
 

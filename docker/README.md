@@ -3,7 +3,7 @@
 默认镜像名：
 
 ```text
-ccr.ccs.tencentyun.com/vtla/vtla:0.5
+ccr.ccs.tencentyun.com/vtla/vtla:0.6
 ```
 
 镜像工作区位于 `/root/VTLA-RL`，包含 IsaacLab、T2-VLA、Tabero_X、RLinf，
@@ -63,7 +63,7 @@ export ALL_PROXY=
 export PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 export PYTORCH_INDEX_URL=https://mirror.sjtu.edu.cn/pytorch-wheels/cu128
 export HF_ENDPOINT=https://hf-mirror.com
-export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.5
+export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.6
 
 BUILDKIT_PROGRESS=plain docker compose build
 ```
@@ -99,7 +99,7 @@ docker buildx du
 
 ```bash
 docker login ccr.ccs.tencentyun.com
-docker push ccr.ccs.tencentyun.com/vtla/vtla:0.5
+docker push ccr.ccs.tencentyun.com/vtla/vtla:0.6
 ```
 
 ## 启动
@@ -161,7 +161,7 @@ docker run --rm -it --gpus all --network host --ipc host \
   -v "$PWD/models:/root/VTLA-RL/models:ro" \
   -v "$PWD/results:/root/VTLA-RL/results" \
   -v "$PWD/Record:/root/VTLA-RL/Record" \
-  ccr.ccs.tencentyun.com/vtla/vtla:0.5 shell
+  ccr.ccs.tencentyun.com/vtla/vtla:0.6 shell
 ```
 
 ## 更新代码
@@ -200,7 +200,7 @@ python -c 'import importlib.util; print(importlib.util.find_spec("isaaclab"))'
 下面的命令都从仓库根目录执行，并统一使用已构建镜像，不隐式拉取新镜像：
 
 ```bash
-export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.5
+export TABERO_IMAGE=ccr.ccs.tencentyun.com/vtla/vtla:0.6
 ```
 
 所有训练都应放进命名 `tmux` 会话并保存 launcher、日志和退出码。以下训练块应写入
@@ -500,9 +500,14 @@ python examples/embodiment/train_embodied_agent.py \
   rollout.model.model_path="$ROOT/models/VTLA-RL-sft-lora-xarm-no-adverb/global_step_30000/model" \
   actor.model.model_path="$ROOT/models/VTLA-RL-sft-lora-xarm-no-adverb/global_step_30000/model" \
   actor.micro_batch_size=1 actor.global_batch_size=2 \
-  actor.fsdp_config.gradient_checkpointing=false \
-  actor.fsdp_config.trainable_checkpoint_metadata.target_global_step=1'
+  actor.fsdp_config.gradient_checkpointing=false'
 ```
+
+当前 RealWorld PiRL 在保存时从实际运行配置生成 checkpoint metadata；不要再设置
+`actor.fsdp_config.trainable_checkpoint_metadata`。仅支持 `realworld_pirl_v1`
+checkpoint 格式，旧 checkpoint 不支持恢复或通过当前入口导出。部署配置与归一化
+资产分别由 `actor.model.deployment_config_name`、`actor.model.export_norm_asset_id`
+指定。HDF5/Pi0 等独立任务不受这一格式变更影响。
 
 ### DSRL smoke
 

@@ -30,6 +30,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 USER root
 
+ARG UBUNTU_MIRROR
 RUN --mount=type=cache,id=vtla-apt-lists,target=/var/lib/apt/lists,sharing=locked \
     --mount=type=cache,id=vtla-apt-cache,target=/var/cache/apt,sharing=locked \
     export HTTP_PROXY="${HTTP_PROXY}" \
@@ -38,9 +39,13 @@ RUN --mount=type=cache,id=vtla-apt-lists,target=/var/lib/apt/lists,sharing=locke
     http_proxy="${HTTP_PROXY}" \
     https_proxy="${HTTPS_PROXY}" \
     all_proxy="${ALL_PROXY}" \
+    && if [[ -n "${UBUNTU_MIRROR}" ]]; then \
+         sed -i -E "s@^URIs: http://(archive|security)\.ubuntu\.com/ubuntu/?\$@URIs: ${UBUNTU_MIRROR}@" \
+           /etc/apt/sources.list.d/ubuntu.sources; \
+       fi \
     && rm -f /etc/apt/apt.conf.d/docker-clean \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends \
+    && apt-get -o Acquire::Retries=5 update \
+    && apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
         bash \
         build-essential \
         ca-certificates \
@@ -175,7 +180,7 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
 
 # Download the immutable Tabero_X asset snapshot through a configurable
 # Hugging Face endpoint.  The cache mount preserves partial downloads across
-# retries, while --mode copy places the verified assets in the final image
+# retries, while copy mode places the downloaded assets in the final image
 # instead of leaving links to the build-only cache directory.
 RUN --mount=type=cache,id=vtla-tabero-assets,target=/root/.cache/tabero-assets,sharing=locked \
     --mount=type=secret,id=hf_token \
@@ -194,21 +199,35 @@ RUN --mount=type=cache,id=vtla-tabero-assets,target=/root/.cache/tabero-assets,s
        fi \
     && cd /root/VTLA-RL/Tabero_X/scripts/tools/assets \
     && /root/VTLA-RL/IsaacLab/.venv/bin/python - <<'PY'
-from functools import partial
 from pathlib import Path
 
-from fetch_hf_assets import fetch_assets
+from fetch_hf_assets import _preflight_store
+from hf_assets import _resolve_within, load_lock, load_manifest, materialize_assets
 from huggingface_hub import snapshot_download
 
 repo_root = Path("/root/VTLA-RL/Tabero_X")
-snapshot_root = fetch_assets(
-    repo_root=repo_root,
-    lock_path=repo_root / "assets/hf_assets.lock.json",
-    asset_store=Path("/root/.cache/tabero-assets"),
-    mode="copy",
-    repair_links=True,
-    downloader=partial(snapshot_download, max_workers=1),
+lock = load_lock(repo_root / "assets/hf_assets.lock.json")
+asset_store = Path("/root/.cache/tabero-assets")
+_preflight_store(asset_store, lock.total_size_bytes)
+snapshot_root = asset_store / lock.revision
+snapshot_download(
+    repo_id=lock.repo_id,
+    repo_type=lock.repo_type,
+    revision=lock.revision,
+    local_dir=snapshot_root,
+    allow_patterns=[*(f"{path}/**" for path in lock.paths), lock.manifest_path],
+    max_workers=1,
 )
+# Check download completeness without re-reading every asset to compute a hash.
+manifest = load_manifest(snapshot_root / lock.manifest_path)
+entries = manifest.get("files", [])
+if not entries or sum(entry["size"] for entry in entries) != lock.total_size_bytes:
+    raise RuntimeError("asset manifest size does not match the lock file")
+for entry in entries:
+    path = _resolve_within(snapshot_root, entry["path"])
+    if not path.is_file() or path.stat().st_size != entry["size"]:
+        raise RuntimeError(f"missing or incomplete asset: {entry['path']}")
+materialize_assets(repo_root, snapshot_root, lock, mode="copy", repair_links=True)
 print(f"Assets ready at: {snapshot_root}")
 PY
 
@@ -578,12 +597,8 @@ with ThreadPoolExecutor(max_workers=4) as executor:
 asset_root.parent.mkdir(parents=True, exist_ok=True)
 shutil.copytree(download_root / "libero/USD", asset_root, dirs_exist_ok=True)
 
-expected_hash = "63dfcc779e931529f9ab5e248ab316cc"
 expected_file_count = 121
 expected_total_bytes = 144866192
-hash_file = asset_root / ".asset_hash"
-if hash_file.read_text(encoding="utf-8").strip() != expected_hash:
-    raise RuntimeError(f"unexpected Libero asset hash in {hash_file}")
 
 files = [path for path in asset_root.rglob("*") if path.is_file()]
 if any(path.is_symlink() for path in asset_root.rglob("*")):
@@ -633,6 +648,24 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
          && "${python}" -c 'from importlib.metadata import version; assert version("nvidia-nccl-cu12") == "2.27.7"' \
          || exit 1; \
        done
+
+# Materialize the pinned Franka/GelSight bundle after all dependency layers.
+# This bundle is separate from the xArm/XENSE lock and LIBERO USD assets.
+ARG FRANKA_ASSET_REPO_ID=china-sae-robotics/Tactile_Manipulation_Dataset
+ARG FRANKA_ASSET_REVISION=9929b1a9e16b51d2d9b93c6733bc8efe91c83c05
+ARG FRANKA_HTTP_PROXY
+ARG FRANKA_HTTPS_PROXY
+RUN --mount=type=cache,id=vtla-franka-assets,target=/root/.cache/franka-assets,sharing=locked \
+    --mount=type=secret,id=hf_token \
+    export HTTP_PROXY="${FRANKA_HTTP_PROXY:-${HTTP_PROXY}}" \
+    HTTPS_PROXY="${FRANKA_HTTPS_PROXY:-${HTTPS_PROXY}}" \
+    HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}" \
+    HF_HUB_DISABLE_XET=1 HF_HUB_ETAG_TIMEOUT=60 HF_HUB_DOWNLOAD_TIMEOUT=60 \
+    && export http_proxy="${HTTP_PROXY}" https_proxy="${HTTPS_PROXY}" all_proxy="${ALL_PROXY}" \
+    && /root/VTLA-RL/IsaacLab/.venv/bin/python \
+       /root/VTLA-RL/Tabero_X/scripts/tools/assets/fetch_franka_assets.py \
+       --repo-id "${FRANKA_ASSET_REPO_ID}" --revision "${FRANKA_ASSET_REVISION}" \
+       --cache-dir /root/.cache/franka-assets --token-file /run/secrets/hf_token
 
 ENTRYPOINT ["/root/VTLA-RL/docker/entrypoint.sh"]
 CMD ["shell"]
