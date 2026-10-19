@@ -13,14 +13,14 @@
 * stage2 +- 1cm 随机化 + +500g 随机化
 * stage3 +- 1cm 随机化 + +500g 随机化 + 力 reward
 
-镜像使用 ccr.ccs.tencentyun.com/vtla/vtla:0.8.8 镜像
+镜像使用 ccr.ccs.tencentyun.com/vtla/vtla:0.8.9 镜像
 
 基模统一为 [Demomasterlqx/VTLA-RL-sft-lora-franka-no-adverb-05-effort](https://huggingface.co/Demomasterlqx/VTLA-RL-sft-lora-franka-no-adverb-05-effort) 的 `step_30000`
 
 镜像启动方式
 
 ```bash
-export TABERO_IMAGE="ccr.ccs.tencentyun.com/vtla/vtla:0.8.8"
+export TABERO_IMAGE="ccr.ccs.tencentyun.com/vtla/vtla:0.8.9"
 docker compose run --rm rlinf
 ```
 
@@ -45,3 +45,8 @@ python ./examples/embodiment/train_embodied_agent.py \
 ```
 
 ## RLT
+
+rlt stage 1 模型在 https://huggingface.co/Demomasterlqx/vtla-rl-sft-tabero-no-state-no-adverb-force-005-80k-2026-10-5
+
+* stage1 使用配置 [isaaclab_pi05_rlt_task820_multi_tasks_tacfield_8gpu_benchmark_stage1](../../RLinf/examples/embodiment/config/isaaclab_pi05_rlt_task820_multi_tasks_tacfield_8gpu_benchmark_stage1.yaml)
+* stage2 使用配置 [isaaclab_pi05_rlt_task820_multi_tasks_tacfield_8gpu_benchmark_stage2](../../RLinf/examples/embodiment/config/isaaclab_pi05_rlt_task820_multi_tasks_tacfield_8gpu_benchmark_stage2.yaml)
