@@ -28,7 +28,7 @@ docker compose run --rm rlinf
 
 参考 [2026-10-10 实验](../2026-10-10-task820-no_adverb_pirl_muitl_tasks_30kbase-stage-3-normalized-reward-6-gpu-env/Readme.md)，从相同 Stage 1 `global_step_200` 起点训练至累计 step 400。
 
-* stage2 使用配置 [isaaclab_pi05_pirl_task820_multi_tasks_tacfield_8gpu_benchmark_stage_2_10_times_normalized_reward_6_env_gpu_delta_500g_xy_1cm](RLinf/examples/embodiment/config/isaaclab_pi05_pirl_task820_multi_tasks_tacfield_8gpu_benchmark_stage_2_10_times_normalized_reward_6_env_gpu_delta_500g_xy_1cm.yaml)
+* stage2 使用配置 [isaaclab_pi05_pirl_task820_multi_tasks_tacfield_8gpu_benchmark_stage_2_10_times_normalized_reward_6_env_gpu_delta_500g_xy_1cm](../../RLinf/examples/embodiment/config/isaaclab_pi05_pirl_task820_multi_tasks_tacfield_8gpu_benchmark_stage_2_10_times_normalized_reward_6_env_gpu_delta_500g_xy_1cm.yaml)
 
 ## DSRL
 
