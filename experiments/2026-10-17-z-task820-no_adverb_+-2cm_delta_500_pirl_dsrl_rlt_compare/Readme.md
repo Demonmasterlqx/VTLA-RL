@@ -13,14 +13,14 @@
 * stage2 +- 1cm 随机化 + +500g 随机化
 * stage3 +- 1cm 随机化 + +500g 随机化 + 力 reward
 
-镜像使用 ccr.ccs.tencentyun.com/vtla/vtla:0.8.9 镜像
+镜像使用 ccr.ccs.tencentyun.com/vtla/vtla:0.8.10 镜像
 
 基模统一为 [Demomasterlqx/VTLA-RL-sft-lora-franka-no-adverb-05-effort](https://huggingface.co/Demomasterlqx/VTLA-RL-sft-lora-franka-no-adverb-05-effort) 的 `step_30000`
 
 镜像启动方式
 
 ```bash
-export TABERO_IMAGE="ccr.ccs.tencentyun.com/vtla/vtla:0.8.9"
+export TABERO_IMAGE="ccr.ccs.tencentyun.com/vtla/vtla:0.8.10"
 docker compose run --rm rlinf
 ```
 
