@@ -23,6 +23,8 @@ config_name() {
 case "$MODE" in
     --help|-h)
         echo "Host launcher: PiRL Stage 1/2 -> DSRL Stage 1/2 -> RLT Stage 1/2."
+        echo "Every 100 steps: upload a complete resumable checkpoint to a public HF model repo."
+        echo "HF username comes from .env HF_TOKEN; repo name is the experiment name."
         echo "bash $0 --dry-run    Print the plan; no Docker or filesystem writes."
         echo "bash $0 --check      Pull/inspect image, snapshot and preflight; no training."
         echo "tmux new -s task820-compare"
@@ -53,6 +55,7 @@ if [[ "$MODE" == --dry-run ]]; then
             echo "$method stage$stage: target=$((stage * 200)), resume=$checkpoint, reward=$reward"
             echo "  docker compose run ... rlinf rlinf -lc 'python examples/embodiment/train_embodied_agent.py --config-path <saved-config> --config-name $(config_name "$method" "$stage")'"
             echo "  WANDB_RUN_ID=<persisted-$method-id> WANDB_RESUME=$resume"
+            echo "  HF: <HF_TOKEN owner>/2026-10-20-task820-no_adverb_xy_1cm_${method}_compare/global_step_{$((stage * 200 - 100)),$((stage * 200))}"
         done
     done
     exit 0
@@ -101,6 +104,8 @@ else
 fi
 export TABERO_IMAGE="$IMAGE_ID"
 COMPOSE=(docker compose --project-directory "$WORKSPACE" --env-file "$ENV_FILE" -f "$WORKSPACE/docker-compose.yaml")
+NETWORK_ENV=(-e HTTP_PROXY -e HTTPS_PROXY -e ALL_PROXY -e NO_PROXY
+             -e http_proxy -e https_proxy -e all_proxy -e no_proxy)
 "${COMPOSE[@]}" config --quiet
 
 snapshot() {
@@ -183,6 +188,21 @@ def digest(path):
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             checksum.update(chunk)
         return checksum.hexdigest()
+
+
+def hf_api():
+    import requests
+    from huggingface_hub import HfApi, configure_http_backend
+
+    require(os.environ.get("HF_TOKEN"), "HF_TOKEN is missing from the mounted .env")
+
+    class BoundedSession(requests.Session):
+        def request(self, *args, **kwargs):
+            kwargs.setdefault("timeout", (10, 120))
+            return super().request(*args, **kwargs)
+
+    configure_http_backend(backend_factory=BoundedSession)
+    return HfApi(endpoint="https://huggingface.co", token=os.environ["HF_TOKEN"])
 
 
 def source_hashes(root):
@@ -281,7 +301,13 @@ def preflight():
                         "Expected success-only Stage 1 and normalized force reward in Stage 2")
                 require(Path(env.init_params.realworld_assets_dir).is_dir(), "Missing USD assets in image")
             contracts[f"{method}:{stage}"] = OmegaConf.to_container(cfg, resolve=True)
-    settings = []
+    owner = hf_api().whoami()["name"]
+    owner_path = CONTAINER_CONTROL / "hf_owner"
+    if owner_path.exists():
+        require(owner_path.read_text().strip() == owner, "HF_TOKEN owner changed since the snapshot")
+    else:
+        owner_path.write_text(owner + "\n")
+    settings = ["HF_OWNER=" + shlex.quote(owner)]
     for method in METHODS:
         logger = contracts[f"{method}:1"]["runner"]["logger"]
         for field in ("experiment_name", "log_path", "project_name", "wandb_entity"):
@@ -289,15 +315,18 @@ def preflight():
     (CONTAINER_CONTROL / "settings.env").write_text("\n".join(settings) + "\n")
     write_json(CONTAINER_CONTROL / "contracts.json", contracts)
     print(f"PREFLIGHT_PASS: {len(expected)} source files, six configs; gradient_checkpointing=disabled")
+    print(f"HF_UPLOAD_PLAN: public model repositories under {owner}; complete checkpoints every 100 steps")
 
 
-def checkpoint_check(method, stage):
+def checkpoint_check(method, stage, step=None):
     """Check artifact structure and steps; Stage 2 performs the real distributed restore."""
     import torch
     from torch.distributed.checkpoint import FileSystemReader
 
     cfg = composed_config(method, stage)
-    step = stage * 200
+    step = stage * 200 if step is None else step
+    require(step % 100 == 0 and (stage - 1) * 200 < step <= stage * 200,
+            "Checkpoint step must be a 100-step boundary within this stage")
     checkpoint = Path(cfg.runner.logger.log_path) / cfg.runner.logger.experiment_name / f"checkpoints/global_step_{step}"
     actor = checkpoint / "actor"
 
@@ -351,23 +380,110 @@ def checkpoint_check(method, stage):
                 require(schedule["global_step"] == step and schedule["update_step"] == sidecar["update_step"],
                         "RLT schedule step mismatch")
     print(f"CHECKPOINT_ARTIFACTS_PASS {method} stage{stage}: {checkpoint}")
+    return checkpoint
+
+
+def upload_checkpoint(method, stage, step):
+    """Publish the whole resume_dir in one commit after the runner's atomic marker."""
+    require(os.environ.get("HF_TOKEN"), "HF_TOKEN is missing from the mounted .env")
+    cfg = composed_config(method, stage)
+    owner = (CONTAINER_CONTROL / "hf_owner").read_text().strip()
+    repo_id = f"{owner}/{cfg.runner.logger.experiment_name}"
+    prefix = f"global_step_{step}"
+    checkpoint = Path(cfg.runner.logger.log_path) / cfg.runner.logger.experiment_name / "checkpoints" / prefix
+    # The runner writes this atomically only AFTER every actor has finished saving.
+    require(read_json(checkpoint / "multi_task_state.json")["step"] == step,
+            "Checkpoint is not committed by the runner")
+
+    def inventory():
+        files = {}
+        for path in checkpoint.rglob("*"):
+            require(not path.is_symlink(), f"Checkpoint must contain actual files: {path}")
+            if path.is_file():
+                stat = path.stat()
+                files[path.relative_to(checkpoint).as_posix()] = [stat.st_size, stat.st_mtime_ns]
+        require(files, "Empty checkpoint")
+        return files
+
+    before = inventory()
+    fingerprint = hashlib.sha256(json.dumps(before, sort_keys=True).encode()).hexdigest()
+    receipt_path = CONTAINER_CONTROL / "hf" / method / f"{prefix}.json"
+    if receipt_path.exists():
+        receipt = read_json(receipt_path)
+        require(receipt["repo_id"] == repo_id and receipt["fingerprint"] == fingerprint,
+                "Previously uploaded checkpoint or HF destination changed")
+        print("HF_UPLOAD_SKIP", receipt["url"], flush=True)
+        return
+
+    checkpoint_check(method, stage, step)
+    api = hf_api()
+    api.create_repo(repo_id=repo_id, repo_type="model", private=False, exist_ok=True)
+    require(not api.repo_info(repo_id=repo_id, repo_type="model").private,
+            f"Existing HF repository must be public: {repo_id}")
+    print(f"HF_UPLOAD_START {repo_id}/{prefix}: {len(before)} files, "
+          f"{sum(v[0] for v in before.values())} bytes", flush=True)
+    commit = api.upload_folder(
+        repo_id=repo_id, repo_type="model", folder_path=str(checkpoint),
+        path_in_repo=prefix, commit_message=f"Upload {method} complete checkpoint at step {step}",
+    )
+    require(inventory() == before, "Checkpoint changed during upload")
+    remote = {
+        item.path[len(prefix) + 1:]: item.size
+        for item in api.list_repo_tree(repo_id=repo_id, repo_type="model", path_in_repo=prefix,
+                                       revision=commit.oid, recursive=True)
+        if hasattr(item, "size")
+    }
+    require(remote == {name: values[0] for name, values in before.items()},
+            "HF checkpoint file list or sizes differ from the local resume_dir")
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    url = f"https://huggingface.co/{repo_id}/tree/{commit.oid}/{prefix}"
+    write_json(receipt_path, {"repo_id": repo_id, "revision": commit.oid, "url": url,
+                             "step": step, "method": method, "stage": stage,
+                             "files": len(before), "bytes": sum(v[0] for v in before.values()),
+                             "fingerprint": fingerprint, "complete_resume_dir": True})
+    print("HF_UPLOAD_VERIFIED", url, flush=True)
 
 
 if __name__ == "__main__":
     os.environ["ROOT"] = str(CONTAINER_ROOT)
     if sys.argv[1] == "preflight":
         preflight()
+    elif sys.argv[1] == "upload":
+        upload_checkpoint(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
     else:
         checkpoint_check(sys.argv[2], int(sys.argv[3]))
 PY
 container_check() {
-    "${COMPOSE[@]}" run --pull never --rm -T rlinf rlinf -lc 'exec "$ROOT/RLinf/.venv/bin/python" "$@"' bash "$CONTAINER_CONTROL/check_stage12.py" "$@"
+    "${COMPOSE[@]}" run --pull never --rm -T "${NETWORK_ENV[@]}" rlinf rlinf -lc 'exec "$ROOT/RLinf/.venv/bin/python" "$@"' bash "$CONTAINER_CONTROL/check_stage12.py" "$@"
 }
 container_check preflight 2>&1 | tee "$CONTROL/preflight.log"
 [[ "$MODE" == --run ]] || exit 0
 # This contains only shell-quoted experiment names/paths and W&B entity/project.
 # shellcheck disable=SC1091
 source "$CONTROL/settings.env"
+
+upload_ready_checkpoints() {
+    local method="$1" stage="$2" require_all="${3:-false}" key name step attempt rc
+    key="EXPERIMENT_NAME_${method^^}"; name="${!key}"
+    for ((step = stage * 200 - 100; step <= stage * 200; step += 100)); do
+        if [[ ! -f "$TABERO_RESULTS_HOST/$EXPERIMENT/$method/$name/checkpoints/global_step_$step/multi_task_state.json" ]]; then
+            [[ "$require_all" != true ]] || { echo "HF upload missing completed checkpoint: $method step $step" >&2; return 1; }
+            continue
+        fi
+        # A successful, remotely verified upload is immutable and needs no retry.
+        [[ ! -f "$CONTROL/hf/$method/global_step_$step.json" ]] || continue
+        for attempt in 1 2 3; do
+            rc=0
+            "${COMPOSE[@]}" run --pull never --rm -T --name "$UPLOAD_CONTAINER" "${NETWORK_ENV[@]}" rlinf rlinf -lc \
+                'exec "$ROOT/RLinf/.venv/bin/python" "$@"' bash \
+                "$CONTAINER_CONTROL/check_stage12.py" upload "$method" "$stage" "$step" || rc=$?
+            [[ "$rc" != 0 ]] || break
+            echo "HF upload failed: $method step $step; attempt $attempt/3; exit=$rc" >&2
+            [[ "$attempt" == 3 ]] || sleep "$((attempt * 10))"
+        done
+        [[ "$rc" == 0 ]] || return "$rc"
+    done
+}
 
 idle_gpus() {
     nvidia-smi --query-gpu=index,uuid,memory.used --format=csv,noheader,nounits >"$CONTROL/gpus.before.csv"
@@ -427,6 +543,7 @@ for method in "${METHODS[@]}"; do
             echo "## $method"
             echo "Experiment: $name"
             echo "W&B (one ID for both stages; planned until training initializes): $url"
+            echo "HF (public, full resume_dir every 100 steps): https://huggingface.co/$HF_OWNER/$name"
             echo "Results: $log_path"
         } >>"$REPORT"
     fi
@@ -435,6 +552,8 @@ done
 ACTIVE_CONTAINER=
 ACTIVE_STAGE_DIR=
 MONITOR_PID=
+UPLOAD_PID=
+UPLOAD_CONTAINER=
 START_SECONDS=$SECONDS
 stop_monitor() {
     [[ -n "$MONITOR_PID" ]] || return 0
@@ -442,6 +561,18 @@ stop_monitor() {
     kill "$MONITOR_PID" 2>/dev/null || true
     wait "$MONITOR_PID" 2>/dev/null || true
     MONITOR_PID=
+}
+stop_upload() {
+    if [[ -n "$UPLOAD_CONTAINER" ]]; then
+        docker stop --time 15 "$UPLOAD_CONTAINER" >/dev/null 2>&1 || true
+    fi
+    if [[ -n "$UPLOAD_PID" ]]; then
+        pkill -TERM -P "$UPLOAD_PID" 2>/dev/null || true
+        kill "$UPLOAD_PID" 2>/dev/null || true
+        wait "$UPLOAD_PID" 2>/dev/null || true
+    fi
+    UPLOAD_PID=
+    UPLOAD_CONTAINER=
 }
 finish() {
     local rc=$?
@@ -451,6 +582,7 @@ finish() {
         docker stop --time 60 "$ACTIVE_CONTAINER" >/dev/null 2>&1
     fi
     stop_monitor
+    stop_upload
     if [[ -n "$ACTIVE_STAGE_DIR" ]]; then
         echo failed >"$ACTIVE_STAGE_DIR/status"
         echo "$rc" >"$ACTIVE_STAGE_DIR/exit_code"
@@ -471,9 +603,12 @@ for method in "${METHODS[@]}"; do
     key="PROJECT_NAME_${method^^}"; project="${!key}"
     for stage in 1 2; do
         stage_dir="$CONTROL/$method-stage$stage"
+        UPLOAD_CONTAINER="task820-hf-$method-stage$stage-$run_id"
         if [[ -f "$stage_dir/status" ]]; then
             [[ "$(cat "$stage_dir/status")" == complete ]] || die "$method Stage $stage was interrupted/failed; inspect its logs and review recovery before restarting"
             container_check checkpoint "$method" "$stage"
+            upload_ready_checkpoints "$method" "$stage" true 2>&1 | tee -a "$stage_dir/hf.log"
+            UPLOAD_CONTAINER=
             echo "SKIP verified completed stage: $method $stage"
             continue
         fi
@@ -514,6 +649,16 @@ echo "gradient_checkpointing=disabled; W&B run=$WANDB_RUN_ID; resume=$WANDB_RESU
             trap - EXIT
             trap 'jobs -pr | xargs -r kill 2>/dev/null; exit 0' TERM INT
             while kill -0 "$docker_pid" 2>/dev/null; do
+                upload_ready_checkpoints "$method" "$stage" || exit $?
+                sleep 15
+            done
+            upload_ready_checkpoints "$method" "$stage"
+        ) >"$stage_dir/hf.log" 2>&1 &
+        UPLOAD_PID=$!
+        (
+            trap - EXIT
+            trap 'jobs -pr | xargs -r kill 2>/dev/null; exit 0' TERM INT
+            while kill -0 "$docker_pid" 2>/dev/null; do
                 date -Is
                 timeout 20 nvidia-smi || true
                 sleep 15
@@ -526,6 +671,12 @@ echo "gradient_checkpointing=disabled; W&B run=$WANDB_RUN_ID; resume=$WANDB_RESU
         ACTIVE_CONTAINER=
         echo "$rc" >"$stage_dir/docker_exit_code"
         [[ "$rc" == 0 ]] || die "$method Stage $stage failed (exit $rc); see $stage_dir/launcher.log"
+        # Let an in-flight upload finish. Retry failures once the stage has stopped;
+        # do not mark a stage complete until both 100-step checkpoints are uploaded.
+        wait "$UPLOAD_PID" || echo "HF background upload failed; retrying from saved checkpoints" >&2
+        UPLOAD_PID=
+        upload_ready_checkpoints "$method" "$stage" true 2>&1 | tee -a "$stage_dir/hf.log"
+        UPLOAD_CONTAINER=
         container_check checkpoint "$method" "$stage" 2>&1 | tee "$stage_dir/checkpoint.log"
         "${COMPOSE[@]}" run --pull never --rm -T rlinf rlinf -lc '
 "$ROOT/RLinf/.venv/bin/python" - "$1" "$2" <<'"'"'PY'"'"'
@@ -556,6 +707,7 @@ PY
             echo "Logs / exact launch command: $stage_dir"
             echo "Checkpoint: $log_path/$name/checkpoints/global_step_$((stage * 200))"
             echo "TensorBoard: $log_path/tensorboard"
+            echo "HF uploads: https://huggingface.co/$HF_OWNER/$name; verified receipts: $CONTROL/hf/$method"
             cat "$stage_dir/wandb.log"
         } >>"$REPORT"
     done

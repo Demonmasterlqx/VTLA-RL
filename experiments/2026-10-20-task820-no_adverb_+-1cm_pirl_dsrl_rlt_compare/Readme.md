@@ -37,6 +37,10 @@ docker pull ccr.ccs.tencentyun.com/vtla/vtla:0.9.1
 
 在宿主机的仓库根目录运行；每种方法依次完成 stage1、stage2，并复用同一个 W&B run ID 和链接，同时记录 TensorBoard。
 
+脚本从仓库根目录 `.env` 获取 `HF_TOKEN`，通过 token 查询用户名，为每个实验创建一个 public 模型仓库，仓库名称为 `experiment_name`。每完成 100 步，后台上传完整的 `checkpoints/global_step_N/` 到该仓库的 `global_step_N/`，包括 actor、优化器、replay、调度器和多任务状态，下载后可直接作为 `resume_dir` 使用。
+
+脚本等待 checkpoint 完整落盘，再上传并核对远端文件清单及大小；成功记录保存在 `_launcher/hf/<method>/`，不会重复上传。失败会重试，当前训练继续，但进入下一阶段前必须上传完本阶段的整百 checkpoint。上传日志为各阶段目录中的 `hf.log`。`--check` 只验证 HF_TOKEN 身份，不创建仓库或上传。需要代理时，在宿主机导出 `HTTPS_PROXY` / `HTTP_PROXY`（或对应小写变量），脚本会传入检查和上传容器。
+
 ```bash
 SCRIPT=experiments/2026-10-20-task820-no_adverb_+-1cm_pirl_dsrl_rlt_compare/run_stage12.sh
 bash "$SCRIPT" --dry-run  # 只显示顺序
