@@ -17,7 +17,7 @@
 * [gentle_grasp_0.5_griper_pos_random_delta_adaptive_stage_1_3_+-1cm/stage1](../../Tabero_X/benchmarks/datasets/realworld/config/gentle_grasp_0.5_griper_pos_random_delta_adaptive_stage_1_3_+-1cm/stage1)
 * [gentle_grasp_0.5_griper_pos_random_delta_adaptive_stage_1_3_+-1cm/stage2](../../Tabero_X/benchmarks/datasets/realworld/config/gentle_grasp_0.5_griper_pos_random_delta_adaptive_stage_1_3_+-1cm/stage2)
 
-镜像使用 ccr.ccs.tencentyun.com/vtla/vtla:0.9.3 镜像
+镜像使用 ccr.ccs.tencentyun.com/vtla/vtla:0.9.4 镜像
 
 双阶段配置在 [2026-10-22-adaptive-pirl-dsrl-rlt-compare](../../RLinf/examples/embodiment/config/2026-10-22-adaptive-pirl-dsrl-rlt-compare) 中
 
@@ -46,7 +46,7 @@ results/2026-10-20-task820-no_adverb_+-1cm_pirl_dsrl_rlt_compare/pirl/2026-10-20
 拉取镜像
 
 ```bash
-docker pull ccr.ccs.tencentyun.com/vtla/vtla:0.9.3
+docker pull ccr.ccs.tencentyun.com/vtla/vtla:0.9.4
 ```
 
 使用[脚本](./run_stage12.sh)直接自动化完成所有训练，顺序为 pirl/dsrl/rlt
