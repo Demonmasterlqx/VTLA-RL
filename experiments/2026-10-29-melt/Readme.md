@@ -16,15 +16,32 @@
 * [gentle_grasp_0.5_griper_pos_random_delta_adaptive_stage_1_3_+-1cm/stage1](../../Tabero_X/benchmarks/datasets/realworld/config/gentle_grasp_0.5_griper_pos_random_delta_adaptive_stage_1_3_+-1cm/stage1)
 * [gentle_grasp_0.5_griper_pos_random_delta_adaptive_stage_1_3_+-1cm/stage2](../../Tabero_X/benchmarks/datasets/realworld/config/gentle_grasp_0.5_griper_pos_random_delta_adaptive_stage_1_3_+-1cm/stage2)
 
-计划使用 0.5.0 版本的 Docker image，从 0.4.0 增量构建。**该镜像尚未构建，本次没有启动训练或仿真。**
+本实验使用 `ccr.ccs.tencentyun.com/vtla/vtla:0.9.7`，从已验证的 `0.9.6` 增量构建，仅覆盖源码、配置和启动脚本，沿用原有运行环境。构建与验证记录在 `results/docker-melt-20261029/`。本次没有启动训练或仿真。
 
-## 训练脚本（待实现）
+## 训练脚本
 
-计划在宿主机通过 `run-melt.sh` 调用 Docker，依次完成三组实验各自的 stage1/2。当前已补齐六份训练配置，但 `run-melt.sh` 尚不存在；下述上传与清理是脚本需求，不会由 YAML 自动执行。
+在宿主机通过 [run-melt.sh](run-melt.sh) 调用 Docker，顺序为 **vision-only stage1/2 → tacimg stage1/2 → success-only-reward stage1/2**。默认只显示计划，显式 `--run` 才启动训练。
+
+```bash
+bash experiments/2026-10-29-melt/run-melt.sh --dry-run
+# 检查 0.9.7 镜像源码、模型、配置和 HF 身份：
+bash experiments/2026-10-29-melt/run-melt.sh --check
+# 审阅上述 no-state、同步 RLinf、场景及训练参数后，在宿主机 tmux 中启动：
+tmux new -s task820-melt
+bash experiments/2026-10-29-melt/run-melt.sh --run
+```
+
+`--check` 不启动训练、仿真或 W&B run，也不创建 HF 仓库/上传模型；它会在 `results/2026-10-29-melt/_launcher/` 保存配置、场景、启动脚本及源码哈希快照。镜像缺失时直接停止，不自动 pull/build；镜像源码与本地不一致时停止，不自动同步或切换镜像。`--run` 要求 GPU 0–7 空闲，不会终止其他任务。
+
+每组两个阶段复用 `_launcher/<variant>.wandb_id` 保存的单一 W&B 身份；stage1 使用 `WANDB_RESUME=never`，stage2 使用 `must`。失败阶段停止整个顺序，再次执行会要求先检查失败原因，不自动重启；已完成阶段会核对 checkpoint 和上传凭据后跳过。运行日志、GPU/磁盘日志、每 15 秒的训练指标检查、清理日志、W&B 链接和完整启动命令保存在 `_launcher/<variant>-stageN/`。检测到非有限训练指标或维护进程异常时停止本次训练容器。
+
+正式 `--run` 自动创建 `Record/experiments/<完整时间>-task820-no_adverb-pirl-melt.md`，记录参数快照、源码版本、tmux、每组 W&B/HF 链接、checkpoint、失败事件及训练耗时。此脚本不包含训练后的仿真评估。
 
 脚本从仓库根目录 `.env` 获取 `HF_TOKEN`，通过 token 查询用户名，为每个实验创建一个 public 模型仓库，仓库名称为 `experiment_name`。每完成 100 步，后台上传完整的 `checkpoints/global_step_N/` 到该仓库的 `global_step_N/`，包括 actor DCP 权重、优化器、调度器、RNG、trainable weights sidecar 和多任务状态（PiRL 为 on-policy，不使用 replay buffer），下载后可直接作为 `resume_dir` 使用。
 
-脚本将会滚动保留最近两个可resume的续训点，整百的不会删除。
+上传在独立后台任务中进行；失败重试，阶段结束时必须上传并核对该阶段两个整百 checkpoint 的远端文件清单及大小，才能进入下一阶段。上传凭据保存在 `_launcher/hf/<variant>/`，可重试而不重复上传已验证内容。
+
+独立维护进程每 15 秒检查保存点，验证 DCP 权重/优化器/调度器/RNG、trainable sidecar 和多任务状态后，滚动保留最近两个可 resume 的续训点，所有整百点永久保留。没有完整结束标记、校验失败或正在写入的目录不会删除；上传只读取永久保留的整百点。
 
 ## Vision only
 
@@ -73,8 +90,10 @@ RLinf 原有 TacImage 和 TacField 路径可复用；本次补齐 vision-only �
 
 共同参数沿用参考实验：8 GPU（actor/rollout 0–7，env 0–5），192 个训练环境、96 个 eval 环境，每轮最多 300 环境步，horizon 50、执行 chunk 10；micro batch 48、global batch 384、seed 42；action-expert LoRA rank 32，VLM 冻结，value head 可训练，gradient checkpointing **disabled**。AdamW actor/value LR 为 `1e-6/1e-4`，betas `0.9/0.95`，eps `1e-8`，weight decay `0.01`，clip grad `1.0`，constant scheduler、warmup 0；冻结参数 bf16、训练参数 fp32、bf16 AMP。gamma `0.99`、GAE lambda `0.95`、每轮 update epoch 1。训练期间 eval 关闭，每 10 轮保存，TensorBoard/W&B 均开启。配置保留参考实验的 `tactile_loss_weight: 0.01`；它是 SFT 监督损失参数，不是 PPO 环境力奖励开关。
 
-200/400 指累计 rollout 轮数，不是优化器更新次数。三组 stage1 均从各自 SFT `step_30000` 初始化；stage2 只恢复本组新产出的完整 `global_step_200`，不复用旧 TacField 实验 checkpoint。各组 `experiment_name` 为 `2026-10-29-melt-<variant>-pirl`，输出位于 `results/2026-10-29-melt/<variant>/`，checkpoint 位于其 `<experiment_name>/checkpoints/`；TensorBoard/W&B 本地目录分别为 `tensorboard/`、`wandb/`。同组两阶段应复用同一 W&B run ID，待启动脚本落实。
+200/400 指累计 rollout 轮数，不是优化器更新次数。三组 stage1 均从各自 SFT `step_30000` 初始化；stage2 只恢复本组新产出的完整 `global_step_200`，不复用旧 TacField 实验 checkpoint。各组 `experiment_name` 为 `2026-10-29-melt-<variant>-pirl`，输出位于 `results/2026-10-29-melt/<variant>/`，checkpoint 位于其 `<experiment_name>/checkpoints/`；TensorBoard/W&B 本地目录分别为 `tensorboard/`、`wandb/`。同组两阶段由启动脚本复用同一 W&B run ID。
 
 力奖励使用现有 `max_effort` 字段（替代已弃用的 `mid_effort`），Vitasoy/Coca-Cola/cookie 的 min/max effort 为 `2/36`、`4/12`、`3/30`，reward bounds 为 `-1/1`。success-only 在公共配置和每个物体覆盖中均关闭 normalized effort，旧 `force_bonus` 也关闭；质量随机化仍使用共同 stage2 场景。
 
-验证：六份配置通过 Hydra 解析、PiRL 接口校验、基模/归一化文件路径、数据转换构造和 train/eval 逐物体奖励开关检查；7 项合成输入/接口单元检查通过，Ruff 检查通过。meta-device 模型与本地 safetensors 的键名/形状核对通过：vision/TacImage 各 812 个权重张量，TacField 828 个，仅允许新 value head 与 tied-weight alias 缺失；未实际加载权重或执行模型 forward。检查借用本地 0.9.6 镜像依赖并只读挂载当前源码，无 GPU、无训练/仿真。尚不代表目标 0.5.0 镜像、worker 启动、完整权重加载或训练效果通过；启动前仍需构建镜像并核对源码一致性。
+验证：六份配置通过 Hydra 解析、PiRL 接口校验、基模/归一化文件路径、数据转换构造和 train/eval 逐物体奖励开关检查；7 项合成输入/接口单元检查通过，Ruff 检查通过。meta-device 模型与本地 safetensors 的键名/形状核对通过：vision/TacImage 各 812 个权重张量，TacField 828 个，仅允许新 value head 与 tied-weight alias 缺失；未实际加载权重或执行模型 forward。检查借用本地 0.9.6 镜像依赖并只读挂载当前源码，无 GPU、无训练/仿真。以上记录属于构建前检查；0.9.7 镜像本身的检查以 `results/docker-melt-20261029/release-validation.json` 为准，不代表 worker 启动、完整权重加载或训练效果通过。
+
+脚本验证：Bash 语法、六阶段 dry-run、镜像缺失拒绝启动、合成 DCP/checkpoint 的完整性与保留规则，以及模拟 Docker 的阶段顺序、W&B 身份、上传、完成阶段跳过和失败停止均有独立检查，验证文件位于 `results/2026-10-29-melt/_script_validation/`。这些是离线/模拟检查，尚未实际启动训练、连接 W&B 或向 HF 上传。
