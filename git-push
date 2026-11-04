@@ -1,0 +1,7 @@
+#!/bin/bash
+source .env
+
+git push
+git -C RLinf push
+git -C T2-VLA push
+git -C Tabero_X push
