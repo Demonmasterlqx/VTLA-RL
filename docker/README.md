@@ -6,6 +6,16 @@
 ccr.ccs.tencentyun.com/vtla/vtla:0.10.0
 ```
 
+TacImage RLT 残差训练使用 `ccr.ccs.tencentyun.com/vtla/vtla:0.10.2`，
+从已核验的 0.10.0 增量构建，启动方式见
+[实验 README](../experiments/2026-11-12-tacimg-rlt-training/Readme.md)。
+该增量还清理了基底中 RLinf/T2-VLA 的 NumPy/SciPy wheel RECORD 之外的混合版本残留，
+避免残留 `numpy/ctypeslib/` 遮蔽当前版本的 `ctypeslib.py`。
+先校验已安装 wheel 的文件哈希，再清理额外文件；保留 RLinf NumPy 1.26.0、
+T2-VLA NumPy 1.26.4 和 RLinf SciPy 1.16.3，不修改 IsaacLab 环境。
+构建及发布证据位于 `results/2026-11-12-tacimg-rlt-training/image/`，
+镜像通过检查不代表训练或完整 checkpoint 恢复已经验证。
+
 镜像工作区位于 `/root/VTLA-RL`，包含 IsaacLab、T2-VLA、Tabero_X、RLinf，
 并通过 `/root/VTLA-RL/isaacsim -> /isaac-sim` 使用 NVIDIA 基础镜像自带的
 Isaac Sim。GPU 驱动由宿主机 NVIDIA Container Toolkit 提供，不写入镜像。
