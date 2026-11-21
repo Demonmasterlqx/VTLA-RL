@@ -1,6 +1,20 @@
 # 2026-11-11-single-task-tacimg-coca-cola-pirl
 
-状态：用户已授权在DOIT完成正式训练，2026-11-11 21:25:45 CST已启动0→200→400轮。Docker 0.10.1，四张环境卡各16环境+两张actor/rollout卡；W&B ID `6eb6db01`。当前进度见`results/2026-11-11-single-task-tacimg-coca-cola-pirl/train/supervision-state.json`。下方5轮smoke已通过，正式训练仍在执行。
+状态：**已完成并核验400/400**。2026-11-14 22:11 CST训练正常结束，22:13完成merged模型与bundle导出、实际T2-VLA CPU加载（LOAD_OK），22:27完成本机整体校验。完整checkpoint10–400每10轮保留且已同步本机；本任务六张GPU均已释放。Docker0.10.1、用户确认的冻结代码、64环境4×16、原训练配置与W&B ID `6eb6db01`均保持不变。历史用户停止、step190发布及资源冲突恢复记录完整保留。
+
+最终成功率趋势（仅比较同一Stage2配置）：最初50轮为74.06%，最后50轮为77.67%，提高**3.61个百分点**；中途存在波动，未单调上升。以下均为训练rollout，不能替代独立评测。SR按成功数之和/回合数之和计算；原始统计为 `results/2026-11-11-single-task-tacimg-coca-cola-pirl/train/stage2-sr-trend-step400.json`，step329/350中间快照亦保留。
+
+| 范围 | 成功/回合 | SR |
+|---|---:|---:|
+| Stage2最初50轮201–250 | 2818/3805 | 74.06% |
+| Stage2最后50轮351–400 | 3019/3887 | 77.67% |
+| 最后20轮381–400 | 1210/1550 | 78.06% |
+| 最后10轮391–400 | 598/770 | 77.66% |
+| Stage2全部201–400轮 | 11760/15487 | 75.93% |
+
+本机最终产物位于 `results/2026-11-11-single-task-tacimg-coca-cola-pirl/train/`：`bundle/global_step_400/`为推理bundle，`export/global_step_400/`为合并模型，完整可续训状态位于 `2026-11-11-single-task-tacimg-coca-cola-pirl/checkpoints/global_step_400/`。`step400-final-summary.json`提供总索引，`step400-final-training-audit.json`、`step400-bundle-load-audit.json`与`step400-local-final-audit.json`分别记录训练/日志、实际消费者加载和本机文件核验。815个普通文件及6个符号链接与DOIT一致，另有全部40个checkpoint的独立核验记录。消费者加载使用已保存的 `runtime-compat/peft021/`；未将最终400额外恢复训练，也未新增独立评测或HF上传。
+
+400轮累计训练计时39小时22分43秒；训练容器运行39小时46分9秒（含初始化和停止时的部分轮次），失败恢复另计6分55秒。用户停止至续训间隔26小时49分3秒，等待资源6小时2分55秒。首次启动至最终导出总跨度72小时47分55秒，之后本机同步/核验至22:27；详见 `step400-timing-summary.json`。TensorBoard覆盖steps0–399，离线W&B沿用同一ID，已提交值全部一致；历史step189的124项缺口如实保留，未补造，云端尚未同步。
 
 目标：使用 TacImage Pi0.5 基模训练只包含 Coca-Cola 的 PiRL。保留多任务接口，但任务列表仅有 `coca_cola`。总计使用六张 GPU，64 个训练环境分布在四张环境卡，每卡16个；另外两卡承载 rollout 和 actor。
 
@@ -197,3 +211,10 @@ step190完整checkpoint审计和DOIT/本机逐文件SHA256一致；无副词/no-
 用户指定使用LQX_HF_TOKEN账号Demomasterlqx创建公开仓库，上传与最终校验状态见[正式训练Record](../../Record/experiments/20261111-212500-task820-no_adverb-pirl-single_task_tacimg_coca_cola-train.md)。已记录导出输入task_id元数据兼容处理与PEFT版本要求。
 
 公开发布已完成（2026-11-12 17:10 CST）：[Demomasterlqx/2026-11-11-single-task-tacimg-coca-cola-pirl](https://huggingface.co/Demomasterlqx/2026-11-11-single-task-tacimg-coca-cola-pirl)，commit `c461a13a6082dfc42724e1ce812e29758fa99703`；29个文件的远端大小/哈希全部通过，匿名访问已确认。
+
+
+## 2026-11-13 从完整step190继续训练
+
+用户确认沿用原Docker0.10.1及冻结代码。19:08:09 CST启动完整checkpoint恢复，目标190→200→400；保持64环境4×16、同一W&B身份、no-state/无副词和全部训练超参数，gradient_checkpointing关闭。实际解析配置仅resume_dir发生变化。
+
+启动：GPU_IDS=0,2,3,4,5,6 RESUME_ID=20261113-1907 WANDB_RUN_MODE=offline DIAGNOSE_ENV_ERRORS=1 bash results/2026-11-11-single-task-tacimg-coca-cola-pirl/run_stage12.sh --resume。新启动证据在train/attempts/resume190-20261113-1907/，checkpoint沿用原目录；实时状态及最终验证以正式训练Record为准。

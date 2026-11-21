@@ -185,3 +185,45 @@ GPU_IDS=0,1,2,3,4,5 \
 未执行完整`--check`（包含基模权重哈希、磁盘门禁及HF身份访问），未初始化模型、仿真或训练worker。运行时尚需验证六卡初始化、完整rollout、有限SAC更新、实际Stage2恢复、checkpoint上传和训练稳定性。本脚本不自动启动额外的九条件评测，也不以静态检查代替策略质量评估。
 
 交付时的本机状态：上述镜像内CPU校验成功结束后，收尾查询发现`docker.service`为`inactive`，Docker socket无法连接。本次没有操作Docker服务。实际执行`--check`或`--run`前需恢复目标主机的Docker服务，并重新通过磁盘等预检；这不撤销已经保存的CPU校验记录。
+
+
+## 2026-11-13：HCL 3090 服务器迁移
+
+已使用本机 `.env` 的 `ssh_hcl_lcx_3090` 连接 `qixuan2`，部署到 `/home/ubuntu/VTLA-RL`。代码、Docker 0.10.1、基模与网络配置迁移完成；**容器 CPU 预检通过，GPU 运行验收因宿主机驱动过旧而阻塞，未启动训练或仿真 rollout**。
+
+| 检查 | 结果 |
+|---|---|
+| 源码传输 | 4,630 个文件校验通过；1,749 个训练相关源码与 0.10.1 完全匹配 |
+| 代码选择 | 用户批准沿用 0.10.1；目标工作区对齐 3 个导出/推理文件，本机源码未改变，当前版本及差异留档 |
+| 镜像 | 压缩包 SHA256 通过；配置摘要与全部 53 层 diff ID 和本机一致 |
+| 基模 | 原 TacImage SFT step30000，23 文件、8,437,553,354 字节，全部 SHA256 一致 |
+| 资产 | 镜像内 copy 布局，固定 revision `b2c4fc29d95554041e5a6c5537d1f0942460e58d`；501 文件、6,038,265,377 字节通过大小/哈希校验 |
+| CPU 预检 | 原启动器 `--check` 通过：源码、两阶段 Hydra 配置、基模、归一化和 HF 身份 |
+| GPU 验收 | NVIDIA runtime 能暴露选定六卡；Torch 2.7.1+cu128 初始化失败，`driver too old (found version 11070)` |
+| 网络 | SSH 反向代理后 HF/W&B 认证均 HTTP 200；凭据文件权限 600 |
+| 依赖 | 三个 venv 的 Torch/NumPy 导入成功；`uv pip check` 报 NCCL 2.27.7 与 Torch 声明 2.26.2 不同，源 Dockerfile 明确固定 2.27.7，保留原镜像设置 |
+
+目标采用免密 `sudo docker`，Docker 与 containerd 数据均位于大盘，未将镜像写入根分区。8 张 RTX3090 当前空闲；六卡映射仍为环境 0/3/4/5、actor/rollout 6/7。64 环境、micro/global 8/384、seed42、no-state、无副词及两个 offload 开关均保持不变。W&B 继续使用 `5b076120`；此前无完整 checkpoint，后续是从原 SFT 基模重新开始 Stage1。
+
+新 Docker 29 的 containerd 存储将 manifest digest 显示为 image ID：`sha256:3d8a83d93cee181fccd0a8166c3649d31b24ed2cec114165745bf958b310a914`。底层配置 digest 仍是原 `sha256:337be55a06a5da4715ef5312650a13584a2e484c61512016ad37541647ca2e7d`，配置原始字节和全部 53 层一致。最初导入脚本的旧版 ID 等值检查退出 1；`docker load` 本身成功，后续内容验证通过，原日志保留。
+
+目标是 LXC，NVIDIA 内核驱动为 515.48.07，只上报 CUDA 11.7。需要在 **LXC 宿主机**升级驱动；[Isaac Sim 5.1 官方要求](https://docs.isaacsim.omniverse.nvidia.com/5.1.0/installation/requirements.html)列出的 Linux 验证版本是 580.65.06。未尝试在 LXC 内替换宿主机驱动，也未修改训练精度、batch 或镜像依赖来绕过该问题。
+
+目标入口（默认只执行 CPU 预检）：
+
+```bash
+cd /home/ubuntu/VTLA-RL
+bash results/2026-11-12-single-task-tacimg-coca-cola-dsrl/_hcl_setup/run-on-hcl.sh --check
+# 宿主机驱动升级后，重新进行 CPU + 六卡 CUDA 验收：
+bash results/2026-11-12-single-task-tacimg-coca-cola-dsrl/_hcl_setup/validate-runtime.sh
+```
+
+`run-on-hcl.sh --run` 目前受 GPU 验收标记保护；此次范围为部署，不启动正式训练。成功完成 CUDA 预检也不等于训练或仿真质量已验证。
+
+本机证据（均相对仓库根目录）：
+
+- `results/2026-11-12-single-task-tacimg-coca-cola-dsrl/_hcl_setup/deployment-summary.json`
+- `results/2026-11-12-single-task-tacimg-coca-cola-dsrl/_hcl_setup/`：迁移命令、源码/模型清单、差异、配置入口。
+- `results/2026-11-12-single-task-tacimg-coca-cola-dsrl/_hcl_runtime/_hcl_setup/`：目标端 CPU/GPU、资产、镜像与依赖验收日志。
+- `results/2026-11-12-single-task-tacimg-coca-cola-dsrl/_hcl_runtime/_launcher/`：目标端解析后的配置与历史失败记录。
+- 本机 tmux socket `results/hcl-deploy.sock` 的 `hcl-proxy` 与 `hcl-results-sync` 会话维护网络和结果同步，不会自动启动训练。运行日志每15秒同步，完整 checkpoint 按既有规则单独同步到 `_hcl_runtime`，不覆盖原 node01 记录。
