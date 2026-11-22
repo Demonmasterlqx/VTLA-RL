@@ -210,10 +210,10 @@ BUILDKIT_PROGRESS=plain docker compose build
 T2-VLA 各自使用仓库下的 `.venv`。容器入口会自动 source 只读挂载的
 `/root/VTLA-RL/.env`；不要将 HF 或 W&B token 写入 Dockerfile、镜像层或 Git。
 
-当前经过训练和 bundle 加载 smoke 验证的兼容组合是：T2-VLA 使用
-`peft==0.20.0`，RLinf 使用 `peft==0.21.0`，两边均使用
-`torch==2.7.1+cu128`。两套 PEFT 版本是导出/部署合同的一部分，不要在现有
-`.venv` 中就地升级。完整的版本核对、SFT/PIRL/DSRL/RLT Stage 1/Stage 2、bundle
+当前经过训练和 bundle 加载 smoke 验证的兼容组合是：T2-VLA 和 RLinf 均使用
+`peft==0.21.0`，两边均使用 `torch==2.7.1+cu128`。T2-VLA loader 仍允许
+记录 `peft==0.20.0` 的旧 bundle，并继续执行最终合并张量哈希、文件校验和及其余
+bundle 合同检查。完整的版本核对、SFT/PIRL/DSRL/RLT Stage 1/Stage 2、bundle
 导出和 mode-6 视频评测命令见 `docker/README.md`。
 
 `.env` 至少包含以下两个键（文件应放在宿主机并限制为 `chmod 600`）：

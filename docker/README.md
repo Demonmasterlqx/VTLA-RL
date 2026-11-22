@@ -638,22 +638,20 @@ steps、两个 10-step transition chunks 和一次 actor/critic 更新。正式 
 导出在 RLinf 环境执行。`TRAIN_CONFIG` 必须是训练时保存的完整 resolved YAML，不能是
 未展开的 Hydra 配置。
 
-PIRL/LoRA：RLinf 训练环境保留 PEFT 0.21，导出时把 PEFT 0.20 安装到运行目录的
-overlay，不修改任何 `.venv`。`PYTHONPATH` 只对这次导出命令生效：
+PIRL/LoRA：RLinf 和 T2-VLA 均使用 PEFT 0.21.0，直接在 RLinf 环境执行导出：
 
 ```bash
 docker compose run --pull never --rm -T rlinf rlinf -lc '
-OVERLAY="$ROOT/results/<run>/t2_peft020_export_overlay"
-uv pip install --target "$OVERLAY" --no-deps "peft==0.20.0"
-PYTHONPATH="$OVERLAY:${PYTHONPATH:-}" python -c \
-  "import peft; assert peft.__version__ == '\''0.20.0'\''"
-PYTHONPATH="$OVERLAY:${PYTHONPATH:-}" \
 python -m rlinf.utils.ckpt_convertor.export_openpi_lora_for_t2vla \
   --train_config_path "$TRAIN_CONFIG" \
   --ckpt_path "$PIRL_CHECKPOINT" \
   --output_dir "$ROOT/results/<run>/pirl_t2_checkpoint" \
   --bundle_dir "$ROOT/results/<run>/pirl_lora_bundle"'
 ```
+
+T2-VLA 的 loader 允许 bundle 中记录的 PEFT 版本为 0.20.0 或 0.21.0，
+因此旧的 0.20.0 bundle 仍可加载；最终合并张量哈希、文件校验和以及其余
+bundle 合同仍会严格检查。
 
 DSRL：
 
