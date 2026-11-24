@@ -10,7 +10,7 @@ set -u
 export ISAAC_PATH="$ROOT/isaacsim"
 export CARB_APP_PATH="$ROOT/isaacsim/kit"
 export EXP_PATH="$ROOT/isaacsim/apps"
-export PYTHONPATH="$ROOT/isaacsim/extscache/omni.warp.core-1.8.2+lx64:$ROOT/isaacsim/extscache/omni.warp-1.8.2:${PYTHONPATH:-}"
+export PYTHONPATH="$ROOT/IsaacLab/.venv/lib/python3.11/site-packages:$ROOT/isaacsim/extscache/omni.warp.core-1.8.2+lx64:$ROOT/isaacsim/extscache/omni.warp-1.8.2:${PYTHONPATH:-}"
 export HDF5_TRAJ_SOURCE_DIR="$ROOT/Tabero_X/benchmarks/datasets/realworld/assembled_hdf5"
 export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export PYTHONUNBUFFERED=1

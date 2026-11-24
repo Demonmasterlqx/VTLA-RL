@@ -88,6 +88,11 @@ Tabero_X 固定版本资产。资产下载单独成层，并用 BuildKit cache m
 `PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu128`，并设置
 `HF_ENDPOINT=https://huggingface.co`。
 
+受限资产仓库应使用官方 `HF_ENDPOINT=https://huggingface.co`，避免镜像站跨域
+跳转丢失认证。可分别设置 `HF_PROXY` 和 `PYG_PROXY`，只为 Hugging Face 与
+torch-scatter 下载使用代理。RLinf 直接安装当前工作区 T2-VLA/OpenPI 和
+LeRobot 0.3.3；关键运行依赖由 `docker/*-constraints.txt` 固定。
+
 T2-VLA 的锁文件包含官方 wheel 直链，仅设置 index 不会替换这些地址。
 构建会先从国内源安装锁定的 CUDA 12.8 Torch，再导出带哈希的锁定依赖清单
 预装普通包，最后执行 `uv sync --frozen`。该过程不改写源码中的 `uv.lock`。

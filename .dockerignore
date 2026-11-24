@@ -6,6 +6,12 @@ Record/
 codex-local/
 .codex-local/
 .codex/
+.agents/
+**/.git
+**/.assets/
+**/.cache/
+**/.pytest_cache/
+**/.ruff_cache/
 
 # Isaac Sim is supplied by the NVIDIA Isaac Sim base image.  The workspace
 # path is recreated as /root/VTLA-RL/isaacsim -> /isaac-sim in the image.
@@ -41,7 +47,10 @@ IsaacLab/_isaac_sim
 # Credentials and local environment files must never enter a build context.
 .env
 .env.*
+**/.env
+**/.env.*
 !.env.example
+!**/.env.example
 
 # Local Docker artifacts.
 docker-compose.override.yml

@@ -12,8 +12,7 @@ ARG ALL_PROXY
 ARG RLINF_TORCH_VERSION=2.7.1
 ARG RLINF_TORCHVISION_VERSION=0.22.1
 ARG RLINF_TORCHAUDIO_VERSION=2.7.1
-ARG RLINF_OPENPI_REF=c5dc4b9296a1a4739bf52828f28a579f12dce763
-ARG RLINF_LEROBOT_REF=0cf864870cf29f4738d3ade893e6fd13fbd7cdb5
+ARG RLINF_LEROBOT_REF=b883328e6c95681ca90a18b102e4ae5e1f91e2bf
 ARG RLINF_FLASH_ATTN_VERSION=2.7.4.post1
 
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -85,16 +84,18 @@ RUN UV_PROXY="${HTTPS_PROXY:-${HTTP_PROXY:-}}" \
 ARG PYPI_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple
 ARG PYTORCH_INDEX_URL=https://mirror.sjtu.edu.cn/pytorch-wheels/cu128
 ARG HF_ENDPOINT=https://hf-mirror.com
+ARG OPENPI_TOKENIZER_REVISION=befaa248e4f82954b625a421658f933dfd1a97a0
 
 WORKDIR /root/VTLA-RL
 
-# Copy source repositories, including their .git metadata, so origin URLs,
-# branches and commit history remain available inside the image.  isaacsim is
-# provided once by the base image and linked below.
+# Copy the workspace sources. Submodule .git files point outside the build
+# context; release provenance is recorded separately. Isaac Sim comes from
+# the base image and is linked below.
 COPY IsaacLab /root/VTLA-RL/IsaacLab
 COPY T2-VLA /root/VTLA-RL/T2-VLA
 COPY Tabero_X /root/VTLA-RL/Tabero_X
 COPY RLinf /root/VTLA-RL/RLinf
+COPY docker/isaaclab-constraints.txt /tmp/isaaclab-constraints.txt
 
 # Isaac Sim is provided by the NVIDIA base image at /isaac-sim.  Keep a
 # single installation and expose the paths expected by this workspace,
@@ -146,6 +147,7 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
 # Python.  Keep network asset retrieval out of this layer so a transient
 # Hugging Face failure does not invalidate the completed environment install.
 ARG TORCH_SCATTER_WHEEL_URL=https://data.pyg.org/whl/torch-2.7.0%2Bcu128/torch_scatter-2.1.2%2Bpt27cu128-cp311-cp311-linux_x86_64.whl
+ARG PYG_PROXY
 RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     --mount=type=cache,id=vtla-pip-cache,target=/root/.cache/pip,sharing=locked \
     export HTTP_PROXY="${HTTP_PROXY}" \
@@ -164,31 +166,44 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     && CONDA_PREFIX=/root/VTLA-RL/IsaacLab/.venv \
        VIRTUAL_ENV=/root/VTLA-RL/IsaacLab/.venv \
        ISAACLAB_PATH=/root/VTLA-RL/IsaacLab \
+       PIP_CONSTRAINT=/tmp/isaaclab-constraints.txt \
        PIP_NO_BUILD_ISOLATION=1 \
-       ./IsaacLab/isaaclab.sh --install none \
-    && uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
-       --requirement /root/VTLA-RL/Tabero_X/requirements.txt \
-    && PYG_WHEEL=/tmp/torch_scatter-2.1.2+pt27cu128-cp311-cp311-linux_x86_64.whl \
-    && curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
-       --connect-timeout 20 --max-time 180 \
-       --output "${PYG_WHEEL}" "${TORCH_SCATTER_WHEEL_URL}" \
-    && uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
-       --no-index --no-deps "${PYG_WHEEL}" \
-    && rm "${PYG_WHEEL}" \
-    && uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
-       -e /root/VTLA-RL/Tabero_X/source/tac_manip
+       ./IsaacLab/isaaclab.sh --install none
 
-# Download the immutable Tabero_X asset snapshot through a configurable
-# Hugging Face endpoint.  The cache mount preserves partial downloads across
-# retries, while copy mode places the downloaded assets in the final image
-# instead of leaving links to the build-only cache directory.
-RUN --mount=type=cache,id=vtla-tabero-assets,target=/root/.cache/tabero-assets,sharing=locked \
-    --mount=type=secret,id=hf_token \
+RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     export HTTP_PROXY="${HTTP_PROXY}" \
     HTTPS_PROXY="${HTTPS_PROXY}" \
     ALL_PROXY="${ALL_PROXY}" \
     http_proxy="${HTTP_PROXY}" \
     https_proxy="${HTTPS_PROXY}" \
+    all_proxy="${ALL_PROXY}" \
+    UV_DEFAULT_INDEX="${PYPI_INDEX_URL}" \
+    && uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
+       --requirement /root/VTLA-RL/Tabero_X/requirements.txt \
+    && PYG_WHEEL=/tmp/torch_scatter-2.1.2+pt27cu128-cp311-cp311-linux_x86_64.whl \
+    && curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+       --proxy "${PYG_PROXY:-${HTTPS_PROXY}}" \
+       --connect-timeout 20 --max-time 180 \
+       --output "${PYG_WHEEL}" "${TORCH_SCATTER_WHEEL_URL}" \
+    && uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
+       --no-index --no-deps "${PYG_WHEEL}" \
+    && uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
+       --overrides <(printf 'torch-scatter @ file://%s\n' "${PYG_WHEEL}") \
+       -e /root/VTLA-RL/Tabero_X/source/tac_manip \
+    && rm "${PYG_WHEEL}"
+
+# Download the immutable Tabero_X asset snapshot through a configurable
+# Hugging Face endpoint.  The cache mount preserves partial downloads across
+# retries, while copy mode places the downloaded assets in the final image
+# instead of leaving links to the build-only cache directory.
+ARG HF_PROXY
+RUN --mount=type=cache,id=vtla-tabero-assets,target=/root/.cache/tabero-assets,sharing=locked \
+    --mount=type=secret,id=hf_token \
+    export HTTP_PROXY="${HF_PROXY:-${HTTP_PROXY}}" \
+    HTTPS_PROXY="${HF_PROXY:-${HTTPS_PROXY}}" \
+    ALL_PROXY="${ALL_PROXY}" \
+    http_proxy="${HF_PROXY:-${HTTP_PROXY}}" \
+    https_proxy="${HF_PROXY:-${HTTPS_PROXY}}" \
     all_proxy="${ALL_PROXY}" \
     HF_ENDPOINT="${HF_ENDPOINT}" \
     HF_HUB_DISABLE_XET=1 \
@@ -202,7 +217,7 @@ RUN --mount=type=cache,id=vtla-tabero-assets,target=/root/.cache/tabero-assets,s
 from pathlib import Path
 
 from fetch_hf_assets import _preflight_store
-from hf_assets import _resolve_within, load_lock, load_manifest, materialize_assets
+from hf_assets import _resolve_within, load_lock, load_manifest, materialize_assets, verify_manifest
 from huggingface_hub import snapshot_download
 
 repo_root = Path("/root/VTLA-RL/Tabero_X")
@@ -210,23 +225,31 @@ lock = load_lock(repo_root / "assets/hf_assets.lock.json")
 asset_store = Path("/root/.cache/tabero-assets")
 _preflight_store(asset_store, lock.total_size_bytes)
 snapshot_root = asset_store / lock.revision
-snapshot_download(
-    repo_id=lock.repo_id,
-    repo_type=lock.repo_type,
-    revision=lock.revision,
-    local_dir=snapshot_root,
-    allow_patterns=[*(f"{path}/**" for path in lock.paths), lock.manifest_path],
-    max_workers=1,
+manifest_path = snapshot_root / lock.manifest_path
+cached_entries = load_manifest(manifest_path)["files"] if manifest_path.is_file() else []
+cache_complete = bool(cached_entries) and all(
+    (path := _resolve_within(snapshot_root, entry["path"])).is_file()
+    and path.stat().st_size == entry["size"]
+    for entry in cached_entries
 )
-# Check download completeness without re-reading every asset to compute a hash.
+if not cache_complete:
+    snapshot_download(
+        repo_id=lock.repo_id,
+        repo_type=lock.repo_type,
+        revision=lock.revision,
+        local_dir=snapshot_root,
+        allow_patterns=[*(f"{path}/**" for path in lock.paths), lock.manifest_path],
+        max_workers=4,
+    )
 manifest = load_manifest(snapshot_root / lock.manifest_path)
 entries = manifest.get("files", [])
 if not entries or sum(entry["size"] for entry in entries) != lock.total_size_bytes:
     raise RuntimeError("asset manifest size does not match the lock file")
-for entry in entries:
-    path = _resolve_within(snapshot_root, entry["path"])
-    if not path.is_file() or path.stat().st_size != entry["size"]:
-        raise RuntimeError(f"missing or incomplete asset: {entry['path']}")
+if manifest.get("source_git_commit") != lock.source_commit:
+    raise RuntimeError("asset manifest source does not match the lock file")
+errors = verify_manifest(snapshot_root, manifest)
+if errors:
+    raise RuntimeError("asset verification failed: " + "; ".join(errors))
 materialize_assets(repo_root, snapshot_root, lock, mode="copy", repair_links=True)
 print(f"Assets ready at: {snapshot_root}")
 PY
@@ -252,6 +275,7 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
 # Seed T2-VLA's exact CUDA 12.8 Torch tuple through the configurable mirrors.
 # Its transitive NVIDIA wheels are locked to PyPI, so use the ordinary mirror
 # as the fallback index while keeping the CUDA Torch index authoritative.
+ARG UV_HTTP_TIMEOUT=180
 RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     export HTTP_PROXY="${HTTP_PROXY}" \
     HTTPS_PROXY="${HTTPS_PROXY}" \
@@ -269,21 +293,9 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
 # T2-VLA has an authoritative uv.lock and is installed frozen. Seed the locked
 # registry packages (including their hashes) from the mirror first, because
 # frozen sync otherwise follows files.pythonhosted.org URLs from the lock.
-# uv pip install transformers==4.53.2 && cp -r ./src/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/
-# for transformers_replace is not installed correctly.
-#
-# uv run python - <<'PY'
-# from openpi.shared import download
-
-# path = download.maybe_download(
-#     "gs://big_vision/paligemma_tokenizer.model",
-#     gs={"token": "anon"},
-# )
-
-# print("Downloaded to:", path)
-# PY
-# for loading the tokenizer model in container.
+ARG GIT_LFS_SKIP_SMUDGE=1
 RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
+    --mount=type=secret,id=hf_token \
     export HTTP_PROXY="${HTTP_PROXY}" \
     HTTPS_PROXY="${HTTPS_PROXY}" \
     ALL_PROXY="${ALL_PROXY}" \
@@ -292,6 +304,11 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     all_proxy="${ALL_PROXY}" \
     UV_DEFAULT_INDEX="${PYPI_INDEX_URL}" \
     PIP_INDEX_URL="${PYPI_INDEX_URL}" \
+    HF_ENDPOINT="${HF_ENDPOINT}" HF_HUB_DISABLE_XET=1 \
+    OPENPI_TOKENIZER_REVISION="${OPENPI_TOKENIZER_REVISION}" \
+    && if [[ -s /run/secrets/hf_token ]]; then \
+         export HF_TOKEN="$(cat /run/secrets/hf_token)"; \
+       fi \
     && cd /root/VTLA-RL/T2-VLA \
     && uv export --frozen --no-emit-workspace \
        --no-emit-package lerobot --no-emit-package torch \
@@ -305,19 +322,27 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     && SITE_PACKAGES=/root/VTLA-RL/T2-VLA/.venv/lib/python3.11/site-packages \
     && cp -a ./src/openpi/models_pytorch/transformers_replace/. "${SITE_PACKAGES}/transformers/" \
     && /root/VTLA-RL/T2-VLA/.venv/bin/python - <<'PY'
-from openpi.shared import download
+import hashlib
+import os
+from pathlib import Path
+from huggingface_hub import hf_hub_download
 
-path = download.maybe_download(
-   "gs://big_vision/paligemma_tokenizer.model",
-   gs={"token": "anon"},
+if proxy := os.environ.get("HF_PROXY"):
+    os.environ.update({name: proxy for name in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy")})
+path = hf_hub_download(
+    "RLinf/openpi_tokenizer",
+    "big_vision/paligemma_tokenizer.model",
+    revision=os.environ["OPENPI_TOKENIZER_REVISION"],
+    local_dir="/root/.cache/openpi",
 )
-
-print("Downloaded to:", path)
+assert hashlib.sha256(Path(path).read_bytes()).hexdigest() == "8986bb4f423f07f8c7f70d0dbe3526fb2316056c17bae71b1ea975e77a168fc6"
+print("Tokenizer verified:", path)
 PY
 
 # RLinf currently has no trusted lockfile in this checkout.  Install the
 # validated CUDA 12.8 Torch tuple first, then resolve RLinf's embodied extras
 # under explicit constraints instead of copying the host .venv.
+COPY docker/rlinf-constraints.txt /tmp/rlinf-constraints.txt
 RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     export HTTP_PROXY="${HTTP_PROXY}" \
     HTTPS_PROXY="${HTTPS_PROXY}" \
@@ -325,14 +350,6 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     http_proxy="${HTTP_PROXY}" \
     https_proxy="${HTTPS_PROXY}" \
     all_proxy="${ALL_PROXY}" \
-    && printf '%s\n' \
-       "torch==${RLINF_TORCH_VERSION}" \
-       "torchvision==${RLINF_TORCHVISION_VERSION}" \
-       "torchaudio==${RLINF_TORCHAUDIO_VERSION}" \
-       'datasets==3.6.0' \
-       'torchcodec==0.2' \
-       'gymnasium==0.29.1' \
-       > /tmp/rlinf-constraints.txt \
     && uv pip install --python /root/VTLA-RL/RLinf/.venv/bin/python \
        --index-url "${PYTORCH_INDEX_URL}" \
        "torch==${RLINF_TORCH_VERSION}" \
@@ -340,6 +357,7 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
        "torchaudio==${RLINF_TORCHAUDIO_VERSION}" \
     && PYG_WHEEL=/tmp/torch_scatter-2.1.2+pt27cu128-cp311-cp311-linux_x86_64.whl \
     && curl --fail --location --retry 5 --retry-delay 2 --retry-all-errors \
+       --proxy "${PYG_PROXY:-${HTTPS_PROXY}}" \
        --connect-timeout 20 --max-time 180 \
        --output "${PYG_WHEEL}" "${TORCH_SCATTER_WHEEL_URL}" \
     && uv pip install --python /root/VTLA-RL/RLinf/.venv/bin/python \
@@ -348,8 +366,7 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
     && uv pip install --python /root/VTLA-RL/RLinf/.venv/bin/python \
        --index-url "${PYPI_INDEX_URL}" \
        --constraint /tmp/rlinf-constraints.txt \
-       -e '/root/VTLA-RL/RLinf[embodied]' \
-    && rm -f /tmp/rlinf-constraints.txt
+       -e '/root/VTLA-RL/RLinf[embodied]'
 
 # The RLinf OpenPI training path has additional dependencies that are not part
 # of RLinf[embodied].  Install them into the existing RLinf environment without
@@ -375,19 +392,13 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
          export HF_TOKEN="$(cat /run/secrets/hf_token)"; \
        fi \
     && uv pip install --python "${RLINF_PYTHON}" \
+       --no-sources --constraint /tmp/rlinf-constraints.txt \
        "git+https://github.com/huggingface/lerobot.git@${RLINF_LEROBOT_REF}" \
-    && uv pip install --python "${RLINF_PYTHON}" \
-       "git+https://github.com/RLinf/openpi.git@${RLINF_OPENPI_REF}#subdirectory=packages/openpi-client" \
-       "git+https://github.com/RLinf/openpi.git@${RLINF_OPENPI_REF}" \
-    && uv pip install --python "${RLINF_PYTHON}" \
+       -e /root/VTLA-RL/T2-VLA/packages/openpi-client \
+       -e /root/VTLA-RL/T2-VLA \
        --requirement /root/VTLA-RL/RLinf/requirements/embodied/models/openpi.txt \
-       'torchcodec==0.2.1' \
-       'numpydantic==1.7.0' \
-       'pydantic==2.11.7' \
-       'numpy==1.26.0' \
     && SITE_PACKAGES="$("${RLINF_PYTHON}" -c 'import site; print(site.getsitepackages()[0])')" \
-    && test -d "${SITE_PACKAGES}/openpi/models_pytorch/transformers_replace" \
-    && cp -a "${SITE_PACKAGES}/openpi/models_pytorch/transformers_replace/." \
+    && cp -a /root/VTLA-RL/T2-VLA/src/openpi/models_pytorch/transformers_replace/. \
        "${SITE_PACKAGES}/transformers/" \
     && PY_TAG="$("${RLINF_PYTHON}" -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')" \
     && TORCH_MM="$("${RLINF_PYTHON}" -c 'import torch; print(".".join(torch.__version__.split("+", 1)[0].split(".")[:2]))')" \
@@ -406,7 +417,8 @@ RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
        fi \
     && test -s "${TOKENIZER_PATH}" \
     && (uv pip uninstall --python "${RLINF_PYTHON}" pynvml || true) \
-    && uv pip check --python "${RLINF_PYTHON}"
+    && uv pip check --python "${RLINF_PYTHON}" \
+    && rm /tmp/rlinf-constraints.txt
 
 # Fail the build immediately if either runtime is incomplete.  Importing these
 # modules does not start Isaac Sim or allocate a GPU.
@@ -437,12 +449,19 @@ import flatdict
 import flash_attn
 import jax
 import lerobot
+from lerobot.datasets.lerobot_dataset import LeRobotDataset
 import openpi
 import openpi_client
 import torch
+from pathlib import Path
+from openpi.models_pytorch import gemma_pytorch
+from rlinf.models.embodiment.openpi.openpi_action_model import OpenPi0ForRLActionPrediction
+
+assert Path(openpi.__file__).is_relative_to("/root/VTLA-RL/T2-VLA/src")
 
 expected = {
     "jax": "0.5.3",
+    "lerobot": "0.3.3",
     "numpy": "1.26.0",
     "orbax-checkpoint": "0.11.13",
     "torch": "2.7.1",
@@ -490,11 +509,11 @@ ARG LIBERO_HTTPS_PROXY
 ENV LIBERO_ASSETS_DATA_DIR=/root/VTLA-RL/Tabero_X/benchmarks/datasets/libero/USD
 RUN --mount=type=cache,id=vtla-libero-assets,target=/root/.cache/libero-assets,sharing=locked \
     --mount=type=secret,id=hf_token \
-    export HTTP_PROXY="${LIBERO_HTTP_PROXY:-${HTTP_PROXY}}" \
-    HTTPS_PROXY="${LIBERO_HTTPS_PROXY:-${HTTPS_PROXY}}" \
+    export HTTP_PROXY="${LIBERO_HTTP_PROXY:-${HF_PROXY:-${HTTP_PROXY}}}" \
+    HTTPS_PROXY="${LIBERO_HTTPS_PROXY:-${HF_PROXY:-${HTTPS_PROXY}}}" \
     ALL_PROXY="${ALL_PROXY}" \
-    http_proxy="${HTTP_PROXY}" \
-    https_proxy="${HTTPS_PROXY}" \
+    http_proxy="${LIBERO_HTTP_PROXY:-${HF_PROXY:-${HTTP_PROXY}}}" \
+    https_proxy="${LIBERO_HTTPS_PROXY:-${HF_PROXY:-${HTTPS_PROXY}}}" \
     all_proxy="${ALL_PROXY}" \
     HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}" \
     HF_HUB_DISABLE_XET=1 \
@@ -628,6 +647,14 @@ print(
 )
 PY
 
+# Resolve the extension tooling together with IsaacLab RL's packaging<24
+# requirement before applying the final NCCL override.
+RUN --mount=type=cache,id=vtla-uv-cache,target=/root/.cache/uv,sharing=locked \
+    uv pip install --python /root/VTLA-RL/IsaacLab/.venv/bin/python \
+      --index-url "${PYPI_INDEX_URL}" --constraint /tmp/isaaclab-constraints.txt \
+      -e /root/VTLA-RL/IsaacLab/source/isaaclab_rl virtualenv \
+    && uv pip check --python /root/VTLA-RL/IsaacLab/.venv/bin/python
+
 # Torch 2.7.x and T2-VLA's uv.lock require NCCL 2.26.2.  Install the tested
 # NCCL 2.27.7 runtime after all dependency resolution so later installs cannot
 # replace it.  The override intentionally leaves Torch's package metadata and
@@ -657,8 +684,8 @@ ARG FRANKA_HTTP_PROXY
 ARG FRANKA_HTTPS_PROXY
 RUN --mount=type=cache,id=vtla-franka-assets,target=/root/.cache/franka-assets,sharing=locked \
     --mount=type=secret,id=hf_token \
-    export HTTP_PROXY="${FRANKA_HTTP_PROXY:-${HTTP_PROXY}}" \
-    HTTPS_PROXY="${FRANKA_HTTPS_PROXY:-${HTTPS_PROXY}}" \
+    export HTTP_PROXY="${FRANKA_HTTP_PROXY:-${HF_PROXY:-${HTTP_PROXY}}}" \
+    HTTPS_PROXY="${FRANKA_HTTPS_PROXY:-${HF_PROXY:-${HTTPS_PROXY}}}" \
     HF_ENDPOINT="${HF_ENDPOINT:-https://hf-mirror.com}" \
     HF_HUB_DISABLE_XET=1 HF_HUB_ETAG_TIMEOUT=60 HF_HUB_DOWNLOAD_TIMEOUT=60 \
     && export http_proxy="${HTTP_PROXY}" https_proxy="${HTTPS_PROXY}" all_proxy="${ALL_PROXY}" \

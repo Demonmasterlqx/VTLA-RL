@@ -76,6 +76,8 @@ services:
         PYPI_INDEX_URL: ${PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}
         PYTORCH_INDEX_URL: ${PYTORCH_INDEX_URL:-https://mirror.sjtu.edu.cn/pytorch-wheels/cu128}
         HF_ENDPOINT: ${HF_ENDPOINT:-https://hf-mirror.com}
+        HF_PROXY: ${HF_PROXY:-}
+        PYG_PROXY: ${PYG_PROXY:-}
         HTTP_PROXY: ${HTTP_PROXY:-${http_proxy:-}}
         HTTPS_PROXY: ${HTTPS_PROXY:-${https_proxy:-}}
         ALL_PROXY: ${ALL_PROXY:-${all_proxy:-}}

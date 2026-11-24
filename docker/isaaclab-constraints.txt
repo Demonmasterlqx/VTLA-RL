@@ -1,0 +1,11 @@
+# Preserve the simulator dependency combination used by the validated smoke.
+torch==2.7.0
+torchvision==0.22.0
+numpy==1.26.4
+pin==2.7.0
+eigenpy==3.5.1
+hpp-fcl==2.4.4
+transformers==5.17.0
+warp-lang==1.17.0
+# isaaclab_rl requires packaging<24, which pytest 9 no longer supports.
+pytest==8.3.4
