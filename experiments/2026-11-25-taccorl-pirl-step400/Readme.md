@@ -50,6 +50,28 @@ stage2 力奖励系数 10，min/max effort 分别为维他奶 2/36 N、可乐 4/
 仅执行训练：`val_check_interval=-1`、`only_eval=false`、`env.eval=null`。
 不运行周期评估、训练结束后的成功率评测或推理测试。
 
+## 训练前下载 SFT 基模
+
+**启动训练前，必须先将 30k 合并 EMA 模型完整下载到宿主机。** 当前先使用已核验的
+[xiangxin0923 模型仓库](https://huggingface.co/xiangxin0923/VTLA-RL-sft-taccorl-task927-firm-30k)，
+本实验使用其中的
+[step_30000](https://huggingface.co/xiangxin0923/VTLA-RL-sft-taccorl-task927-firm-30k/tree/177418976dfea4095cf899387ca3cafcc84e2f01/step_30000)。
+仓库还提供 10k、20k 导出；本次 PiRL 初始化使用 30k。
+
+安装 Hugging Face CLI 后，从 VTLA-RL 仓库根目录执行：
+
+```bash
+hf download xiangxin0923/VTLA-RL-sft-taccorl-task927-firm-30k \
+  --revision 177418976dfea4095cf899387ca3cafcc84e2f01 \
+  --include 'step_30000/*' \
+  --local-dir results/2026-11-24-task927-firm-taccorl-sft-30k
+```
+
+下载目录需包含 `step_30000/model.safetensors`、`step_30000/config.json`，以及
+`step_30000/assets/pi05_horizon50_taccorl_task927_replay/norm_stats.json`。
+模型和 norm 的 SHA256 见上方参数表；启动脚本会核验这两个文件。
+模型下载不包含 SFT 示范数据，目标机器仍需准备下文指定的真机数据视图。
+
 ## 启动与恢复
 
 从宿主机仓库根目录运行。`.env` 提供 `SWANLAB_API_KEY`，凭据不会写进镜像。
