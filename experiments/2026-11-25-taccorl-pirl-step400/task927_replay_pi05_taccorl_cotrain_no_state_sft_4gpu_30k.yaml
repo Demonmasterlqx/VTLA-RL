@@ -1,0 +1,217 @@
+# 4 ranks x microbatch 8 x accumulation 1 = global 32.
+# Each microbatch contains 4 real and 4 simulation samples.
+defaults:
+- model/pi0_5@actor.model
+- hybrid_engines/fsdp@actor.fsdp_config
+- override hydra/job_logging: stdout
+- _self_
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  searchpath:
+  - file://${oc.env:EMBODIED_PATH}/config/
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor: 0-3
+runner:
+  task_type: sft
+  logger:
+    log_path: ${oc.env:TACCORL_RUN_DIR}/formal
+    project_name: tabero-rlinf
+    experiment_name: pi05-taccorl-task927-replay-nostate-b32-30k
+    logger_backends:
+    - tensorboard
+    - swanlab
+    swanlab_mode: online
+  checkpoint_root: ${oc.env:TACCORL_RUN_DIR}/formal/checkpoints
+  resume_dir: null
+  max_epochs: -1
+  max_steps: 30000
+  val_check_interval: -1
+  save_interval: 1000
+data:
+  train_data_paths: []
+  cotrain:
+    sim_weight: 0.5
+    temporal_mode: native_frames
+    real:
+      dataset_path: ${oc.env:TACCORL_RUN_DIR}/data/realworld_task927_firm_4x4_model_coordinates
+    sim:
+      dataset_path: ${oc.env:VTLA_ROOT}/datasets/realworld_replayed_firm_4x4
+actor:
+  group_name: Task927TacCoRLSft
+  training_backend: fsdp
+  micro_batch_size: 8
+  global_batch_size: 32
+  seed: 42
+  model_weight_ema_decay: 0.99
+  model:
+    model_type: openpi
+    model_path: ${oc.env:VTLA_ROOT}/models/pi05_base_pytorch
+    precision: fp32
+    frozen_parameter_precision: bf16
+    trainable_parameter_precision: fp32
+    is_lora: true
+    lora_rank: 32
+    paligemma_lora_rank: 16
+    action_expert_lora_rank: 32
+    paligemma_lora_exclude_modules: .*vision_tower.*
+    lora_path: null
+    lora_target: both
+    freeze_non_lora: true
+    extra_trainable_modules:
+    - paligemma_with_expert.paligemma.base_model.model.model.vision_tower
+    - action_in_proj
+    - time_mlp_in
+    - time_mlp_out
+    - action_out_proj
+    - marker_token_encoder
+    - tactile_cross_attn
+    checkpoint_load_allowed_missing_prefixes:
+    - marker_token_encoder.
+    - tactile_cross_attn.
+    export_norm_asset_id: pi05_horizon50_taccorl_task927_replay
+    num_action_chunks: 50
+    action_dim: 13
+    add_value_head: false
+    num_steps: 10
+    openpi_data:
+      contact_threshold: 1.0
+      contact_min_active: 5
+      norm_stats_path: ${oc.env:TACCORL_RUN_DIR}/norm_stats/pi05_horizon50_taccorl_task927_replay/norm_stats.json
+    openpi:
+      config_name: pi05_lora_taccorl_realworld_replayed_task820
+      pi05: true
+      action_horizon: 50
+      discrete_state_input: false
+      num_images_in_input: 2
+      train_expert_only: false
+      action_chunk: 50
+      action_env_dim: 13
+      effective_action_dim: 13
+      tactile_type: expert_his_c_fut
+      tactile_dim: 6
+      tactile_dim_in: 0
+      tactile_prefix_dim_in: 7920
+      tactile_prefix_history: 8
+      tactile_prefix_encoder_type: tcn
+      tactile_prefix_use_reference_frame: true
+      tactile_prefix_diff_from_reference: false
+      tactile_fusion: taccorl
+      tactile_prefix_num_tokens: 8
+      tactile_suffix_num_tokens: 8
+      tactile_prefix_cross_attn: true
+      tactile_cross_attn_heads: 8
+      image_noise_std: 0.03
+      tactile_streams:
+      - tactile_prefix
+      - tactile_suffix
+      tactile_loss_weight: 0.05
+      padding_loss_weight: 1.0
+      expert_his_c_fut_loss_mode: weighted_full
+      num_steps: 10
+  optim:
+    lr: 2.5e-05
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: 1.0e-10
+    clip_grad: 1.0
+    total_training_steps: 30000
+    lr_warmup_steps: 600
+    lr_decay_steps: 30000
+    lr_scheduler: openpi_cosine
+    num_cycles: 0.5
+    min_lr: 5.0e-06
+  fsdp_config:
+    strategy: fsdp
+    sharding_strategy: full_shard
+    use_orig_params: false
+    cpu_offload: false
+    gradient_checkpointing: true
+    gradient_checkpointing_use_reentrant: false
+    limit_all_gathers: true
+    save_full_model_weights: false
+    save_trainable_model_weights: true
+    checkpoint_format: dcp
+    trainable_checkpoint_metadata:
+      method: sft_full_lora_taccorl_cotrain
+      dataset:
+      - xiangxin0923/realworld_task927_firm_4x4
+      - xiangxin0923/realworld_replayed_firm_4x4
+      model_family: pi05
+      base_model: models/pi05_base_pytorch
+      openpi_config_name: pi05_lora_taccorl_realworld_replayed_task820
+      deployment_config_name: pi05_lora_taccorl_cotrain_task820_firm_mixed_no_state
+      discrete_state_input: false
+      action_horizon: 50
+      execution_steps: 10
+      control_hz: 20
+      policy_horizon_seconds: 2.5
+      execution_horizon_seconds: 0.5
+      effective_action_dim: 13
+      tactile_input: tactile_marker_motion
+      tactile_prefix_dim_in: 7920
+      tactile_prefix_history: 8
+      tactile_fusion: taccorl
+      tactile_prefix_num_tokens: 8
+      tactile_suffix_num_tokens: 8
+      tactile_prefix_cross_attn: true
+      tactile_cross_attn_heads: 8
+      image_noise_std: 0.03
+      contact_threshold: 1.0
+      contact_min_active: 5
+      sim_weight: 0.5
+      tactile_prefix_use_reference_frame: true
+      tactile_prefix_diff_from_reference: false
+      num_images_in_input: 2
+      excluded_tactile_inputs:
+      - tactile_image
+      - tactile_gripper_force
+      action_loss_weight: 1.0
+      future_force_loss_weight: 0.05
+      padding_loss_weight: 1.0
+      loss_mode: weighted_full
+      gripper_coordinate: xarm_positive_open
+      frozen_parameter_precision: bf16
+      trainable_parameter_precision: fp32
+      compute_precision: bf16_amp
+      export_precision: bf16
+      paligemma_lora_rank: 16
+      action_expert_lora_rank: 32
+      freeze_non_lora: true
+      trainable_siglip: true
+      siglip_lora: false
+      tactile_marker_encoder_initialization: random
+      model_weight_ema_decay: 0.99
+      weight_variant: ema
+      training_config: task927_replay_pi05_taccorl_cotrain_no_state_sft_4gpu_30k
+      target_global_step: 30000
+      dataset_variant: task927_real_replayed_firm
+      dataset_revision: v2.1
+      dataset_commits:
+      - 56ea2750a9c8a0466c1846db2994bfc1ddcddb93
+      - 73b79193719e98e58c092965c5488c1fe285c571
+      temporal_mode: native_frames
+      source_fps:
+        real: 5
+        sim: 20
+      source_horizon_seconds:
+        real: 10.0
+        sim: 2.5
+      prompt_adverb: Firmly
+    mixed_precision:
+      param_dtype: null
+      reduce_dtype: null
+      buffer_dtype: null
+    amp_autocast:
+      enabled: true
+      precision: bf16
+    grad_scaler:
+      enabled: false
+reward:
+  use_reward_model: false
+critic:
+  use_critic_model: false
